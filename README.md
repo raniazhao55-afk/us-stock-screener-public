@@ -21,6 +21,62 @@
 - **Phase B**（次日开盘一段时间后，`PHASE_B_TASK.md`）：用最新数据复核论点 → 机械风控过滤（含现金账户GFV结算守卫）→ 生成"今日操作清单" → 追加写 `trade_log.jsonl`。仍然不下单。
 - **Phase C**（建议每周一次，`PHASE_C_TASK.md`，2026-09-11新增）：Phase A/B都是逐票视角，Phase C审视"这些票放在一起是不是合理的组合"——集中度/相关性/机会成本排序/压力测试，复用Phase A已有数据不重新研究，输出建议不生成操作清单，追加写 `portfolio_review_log.jsonl`。
 
+下面三节把每个阶段的每一步展开，都是`PHASE_*_TASK.md`原文的摘要，不是另一套说法——细节和例外情况以原文件为准。
+
+### Phase A 具体做什么
+
+**Step 1 构建候选池**：读`watchlist.json`的`symbols`+`held_positions` → 用`risk_rules.json`的`universe.supplementary_scan_type`(默认`most_actives`/`undervalued_growth`/`day_gainers`/`day_losers`四种)各拉一批补充候选、按symbol去重合并 → 对每个候选机械过滤(市值上限/仙股价格阈值/OTC粉单/上市天数不足/排除交易所/报价异常) → 按`watchlist_max_candidates`/`supplementary_scan_max_candidates`截断 → **`held_positions`里的票无论过没过滤都强制保留**。候选来源只有"手动维护watchlist"+"被动动量扫描"两条，都是被动来源。
+
+**Step 2 抓信号**：2a价格/量能信号(60日涨跌幅、量比、距52周极值) → 2b趋势信号(机构持仓/内部人交易/分析师评级变化) → 2d按"偏离阈值程度"打分排队，只有`signal_triggered_research_budget`(默认10)个名额真正深挖，排不进的标`deprioritized_by_budget`(不是否定判断，只是这轮没排上)——**但`held_positions`、首次调研的新自选股(2e)、`undervalued_growth`来源的基本面豁免候选，这三类完全不占这个预算，每轮都强制出论点**。
+
+**Step 3 生成投研论点**：对进入这一步的每个候选依次做3.1技术面(六信号+K线形态)→3.1a月周趋势闸门(算止损位+封顶conviction)→3.2基本面/8-K→3.2a质量去劣闸门(7条硬指标)→3.2b资产负债表异常扫描→3.3资金面→3.3a行业同业对比→3.3b定量概率校准(同业池历史涨跌分布)→3.4新闻去重→3.5综合裁决(先列失败路径再选最强反方证据，定conviction)→3.6方向判定(定direction)→3.7估值台账(仅`direction=long`时，公司指引+分析师预期+同业倍数+指数倍数+终值法+三情景+分析师分歧原因六个视角)→3.8持仓论文台账(仅持仓且long时，建假设清单+分级红线+健康度评分)。
+
+**Step 4 输出**：整体覆盖写`pending_proposals.jsonl`(不是追加)，未触发信号的候选写`screened`记录，末尾写summary分桶汇总，追加`sentiment_history.jsonl`，git commit。
+
+### Phase B 具体做什么
+
+次日开盘一段时间后跑，**不下单**，只生成人工执行用的操作清单。
+
+**Step 1 复核**：拿最新报价判断今日是否疑似不可交易；判断论点是否还成立(价格大幅偏离基准→`thesis_stale`，invalidation条件已发生→`invalidated`归`avoid`)；**周线价格止损**——仅对`is_held:true`的持仓生效，`trend_gate.price_stop_loss_triggered`为true时**无论当天direction是什么(哪怕是long)一律强制归为`sell`**，这是独立于论点判断的价格纪律；**持仓论文台账检查**——读`thesis_ledger.json`的健康度评分，健康度≤2且触发`severity:fatal`红线时同样强制`sell`，其余情况只在`reason`里提示不强制。
+
+**Step 2 机械风控过滤**（AI不能绕过，规则全部来自`risk_rules.json`）：单票仓位上限 → 单日/单周亏损上限(触发后当天/当周只能sell/hold不能新开仓) → **最大并发持仓数**(用`held_positions`当前真实笔数比，**不能预支同一轮里其他候选"待执行的sell"腾出的名额**——sell建议再明确，没在券商App里真实执行、`watchlist.json`没同步更新之前都不算数) → 现金账户GFV结算守卫(取代A股的T+1，用未结算资金买入的仓位在结算完成前不能卖，查不清楚按`not_tradeable`保守处理) → 不可交易检查。全部通过后，`size_pct_of_capital`按`position_sizing_by_conviction`从conviction直接查表(high 20%/medium 12%/low 6%)，不是临场估的数字。
+
+**Step 2b 仓位偏离提示**：持仓实际仓位%跟conviction对应的目标仓位差超过2个百分点时，只在`reason`里提示"可考虑补仓/仓位超出目标"，**action仍是hold，不自动变成buy/sell**。
+
+**Step 2c 部署节奏限制**：只影响新开仓，按"conviction高低→无警告技术信号优先→历史回撤概率更低优先→symbol字母序"排队，超过`max_new_positions_per_day`的候选标`defer`(不是论点有问题，是节奏被延后)。**"今天用了几个新开仓名额"必须查`held_positions`里`date_acquired`是今天的真实条目数，不能用`trade_log.jsonl`里的buy推荐条数算**——推荐不等于执行。
+
+**Step 3-4**：生成操作清单(buy/sell/hold/avoid/defer，`avoid`/`not_tradeable`/`defer`的条目也要写清理由留审计轨迹)，追加写`trade_log.jsonl`，git commit。
+
+### Phase C 具体做什么
+
+建议每周一次，跟Phase A/B不是同一套视角——A/B都是逐票判断，C回答"这些票放在一起是不是合理的组合"，**复用Phase A已有数据，不重新做研究**，不生成操作清单。
+
+**Step 0**：检查`super_trend_map.json`的`last_confirmed_date`是否超过90天，超过就在输出开头提醒一句"该重新跑超级趋势确认了"(见下节)。
+
+**Step 1 解析持仓**：读`held_positions`，算每只的市值/占比/盈亏%，`现金占比=1-持仓占比总和`(不是真实到账现金，是隐含值)。
+
+**Step 2 单仓位体检**：直接复用`thesis_ledger.json`的健康度评分 + `pending_proposals.jsonl`里已有的`valuation_ledger`隐含价，**不重新调用yfinance/SEC**。
+
+**Step 3 组合层面分析**：3.1集中度(第一大持仓占比/前三大占比/持仓数/隐含现金占比) → 3.2相关性与隐性关联(复用`market_calibration.json`的行业分组，找出"看似不同其实同向"的持仓组合，比如同属半导体或同受一国汇率影响) → 3.3机会成本排序(用已有隐含价算"确定性加权预期年化"，跟WebSearch实时查到的货币市场基金收益率对比，排名最后且低于这个基准的持仓要点出来，但不直接建议清仓) → 3.4压力测试(定性，几个粗粒度宏观情景下哪些持仓受冲击最大)。
+
+**Step 4-5**：输出调仓建议表(加仓/减仓/清仓/继续观察/不动)，**这是建议不是操作清单**，不会被Phase B自动消费；追加写`portfolio_review_log.jsonl`，git commit。
+
+## 可选工具：超级趋势确认与供应链瓶颈发现
+
+`PHASE_A_TASK.md`末尾"可选"这一节，**不在每天自动跑的Step1-4里**，是给候选池找新symbol的主动发现工具，方法论改写自[xbtlin/ai-berkshire](https://github.com/xbtlin/ai-berkshire)的`bottleneck-hunter.md`。
+
+**什么时候会被调用**：
+1. **人工手动触发**——直接说"帮我判断一下XX趋势"，或者不指定、从文件里给的起始清单(AI基础设施建设/能源转型/国防现代化/半导体再工业化/太空经济)逐个过。
+2. **Phase C的Step0过期提醒**——`super_trend_map.json`的`last_confirmed_date`超过90天(约一季度)，跑Phase C时会提醒一句，但仍需要你手动去触发，不会自动执行。
+
+**四步流程**：
+1. **超级趋势确认**：4条硬标准(持续性≥3-5年/物理性(要实际硬件建设，不是纯概念)/规模性(全球资本开支>500亿美元/年)/加速性(需求增速>供给扩产速度))全部满足，且找到至少3个**已经发生**的验证事件(带日期来源，不是预测)，才算"确认"；任一条不满足如实标"证据不足"，同样记录留痕。
+2. **供应链物理拆解**：把确认的趋势拆成Layer0(终端)→Layer1(核心组件，通常已被市场充分定价)→Layer2(子组件/材料，**alpha集中区**)→Layer3(上游设备原料)→Layer4(基础设施)，同时画出客户-供应商关系图(谁向谁采购什么，是直接采购/技术规格派生需求/供应商即客户自己/政策资助驱动)，重点扫描没人盯着的Layer2-3。
+3. **瓶颈识别**：对Layer2-3每个环节按6条标准(供给集中度/扩产周期/替代难度/产能利用率/需求增速/客户验证周期)打分，≥4个红灯→S级(最高优先级)，3个→A级，1-2个→B级，没有红灯不算瓶颈。
+4. **从瓶颈到候选**：S/A级瓶颈接入"行业主题候选发现"(市场扫描→严格版硬指标粗筛→行业级偏见自查)，额外加一道给亏损早期公司专用的估值红绿灯(常规估值台账对这类公司常常失效)+芒格式反向验证5问。**Layer1的已充分定价龙头也会被记录**，但走的是完全不同的逻辑——不是"低估"，是"验证过的龙头，等技术性错杀时介入"，这类候选进watchlist后照样跑完整3.1-3.8，不会因为是"龙头"就走捷径。
+
+**产出**：候选清单写进`industry_discovery_log.jsonl`(含被淘汰的和理由，不只记通过的)，**不自动写入`watchlist.json`**——加不加、加哪些由你自己决定，确认要加的symbol手动写进`watchlist.json`的`symbols`后，就变成普通watchlist symbol，交给Phase A的日常流程处理。
+
 ## 文件说明
 
 | 文件 | 作用 |
