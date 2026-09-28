@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2026 Rania
+Copyright (c) 2026 xbtlin
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,3 +19,11 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---
+This file mirrors the license terms of the upstream project this skill ports
+code from: https://github.com/xbtlin/ai-berkshire (financial_rigor.py,
+skills/quality-screen.md, skills/earnings-review.md methodology). Included
+here per MIT's copyright/permission-notice retention requirement — see
+attribution comments in skills/us-stock-data/lib/financial_rigor.py and
+lib/fundamentals_analysis.py for exactly which functions were ported.
