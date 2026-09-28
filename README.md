@@ -1,8 +1,12 @@
 # us-stock-screener
 
-美股版每日筛选 + 投研论点生成系统。架构照搬 [a-stock-screener](../a-stock-screener) 的设计（本身借鉴 [FriesTrader](https://github.com/YizhiSong/FriesTrader) 的纪律设计：机械风控优先、dry-run门槛、append-only审计日志、仓库即持久化状态），数据层改用 [TauricResearch/TradingAgents](https://github.com/TauricResearch/TradingAgents) 的 `dataflows/` 模块（免费无key，Apache-2.0，只借数据获取代码，不用它的LangGraph多智能体编排），公告类数据用 SEC EDGAR 官方披露接口（免费无key）——都只借设计/代码思路，推理仍然全部在 Claude Code 会话内用 Pro/Max 订阅完成，不接按 token 计费的外部 LLM API。
+美股版每日筛选 + 投研论点生成系统，跑在 [Claude Code](https://claude.com/claude-code) 里。架构借鉴 [FriesTrader](https://github.com/YizhiSong/FriesTrader) 的纪律设计（机械风控优先、dry-run门槛、append-only审计日志、仓库即持久化状态），数据层改用 [TauricResearch/TradingAgents](https://github.com/TauricResearch/TradingAgents) 的 `dataflows/` 模块（免费无key，Apache-2.0，只借数据获取代码，不用它的LangGraph多智能体编排），公告类数据用 SEC EDGAR 官方披露接口（免费无key）——都只借设计/代码思路，推理仍然全部在 Claude Code 会话内用 Pro/Max 订阅完成，不接按 token 计费的外部 LLM API。
 
 **现金账户，无自动下单。** Robinhood Agentic Trading 目前是美国居民专属 beta（2026年多个信源确认"US-only sandbox"），本系统设计上完全不连接 Robinhood 或任何券商API——Phase B 只生成"今日操作清单"，下单永远人工在券商 App 完成。
+
+**这是一个个人项目的空白模板**：仓库里的方法论、风控规则、数据层代码都在，但不含任何人的持仓、交易记录或历史论点——这些是你自己运行后才会生成的本地状态。**不构成投资建议**，作者的任何历史回测/论点都不代表未来收益，风险自负。
+
+> **想直接跑起来？先看 [SETUP.md](SETUP.md)。** 下面是系统设计说明。
 
 ## 设计原则
 
@@ -64,4 +68,8 @@
 
 ## 数据依赖
 
-需要本地装好 `us-stock-data` skill（已装在 `~/.claude/skills/us-stock-data/`，依赖在独立 venv `~/.claude/skills/us-stock-data/.venv` 里，避免污染系统 Python）。三层数据全部免费无需付费key，仅 SEC EDGAR 要求设置 `SEC_EDGAR_CONTACT` 环境变量。
+需要本地装好 `us-stock-data` skill（仓库自带在 `skills/us-stock-data/`，装到 `~/.claude/skills/` 的具体步骤见 [SETUP.md](SETUP.md)；依赖装进独立 venv，避免污染系统 Python）。三层数据全部免费无需付费key，仅 SEC EDGAR 要求设置 `SEC_EDGAR_CONTACT` 环境变量。
+
+## License
+
+见 [LICENSE](LICENSE)。数据层代码移植自 [TauricResearch/TradingAgents](https://github.com/TauricResearch/TradingAgents)（Apache-2.0）、[HKUDS/Vibe-Trading](https://github.com/HKUDS/Vibe-Trading)（MIT）、[xbtlin/ai-berkshire](https://github.com/xbtlin/ai-berkshire)（MIT）的部分模块，各自版权声明保留在 `skills/us-stock-data/LICENSE_*` 与相关文件头部。
