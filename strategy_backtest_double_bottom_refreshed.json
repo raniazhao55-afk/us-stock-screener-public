@@ -1,0 +1,235 @@
+{
+  "built_date": "2026-09-08",
+  "purpose": "用修复后的_fresh()重新验证double_bottom(5年窗口)回测结果",
+  "total_trades": 1917,
+  "overall_aggregate": {
+    "n_trades": 1917,
+    "win_rate": 0.4184,
+    "avg_return_pct": 0.029154,
+    "median_return_pct": -0.013183,
+    "profit_factor": 1.7699,
+    "avg_holding_days": 35.42
+  },
+  "by_exit_reason": {
+    "exit_signal": {
+      "n_trades": 1601,
+      "win_rate": 0.4341,
+      "avg_return_pct": 0.038128,
+      "median_return_pct": -0.014858,
+      "profit_factor": 1.9347,
+      "avg_holding_days": 41.66
+    },
+    "price_stop_loss": {
+      "n_trades": 316,
+      "win_rate": 0.3386,
+      "avg_return_pct": -0.016307,
+      "median_return_pct": -0.00779,
+      "profit_factor": 0.2929,
+      "avg_holding_days": 3.84
+    }
+  },
+  "vectorization_finding": "Step 1核查结论：构建task1_extended_5yr_samples.double_bottom的向量化脚本(pattern_extended_backtest.py, simulate_symbol()函数)里，exit信号的rising edge完全没有调用_fresh()，也没有独立复制_fresh()'只查lookback天前那一个点'的旧错误逻辑。它用的是一个更简单、更严格、且从一开始就正确的定义：exit_rise = exit_state & ~shift(exit_state, 1)，即'今天exit_state=True且昨天exit_state=False'的严格单日状态跳变(run长度恰好等于1)。这个定义与_fresh()完全独立，从未受到2026-09-08那个bug(only检查lookback天前那一个点是否为False，而非检查run的真实起点)的影响——因为它根本不做'往回看lookback天'这件事。结论：_fresh()的bug修复对本次double_bottom回测的构建逻辑没有任何影响，这次重跑在算法层面预期与修复前完全等价(唯一可能的差异来源是同一天内两次拉取行情数据之间的缓存/复权价格自然更新，与代码修复无关，见下方delta_summary)。此前的price_stop_loss止损逻辑(compute_price_stop_loss_state)是纯numpy滚动窗口/支撑位计算，同样完全不涉及_fresh()，不受影响。",
+  "comparison_to_pre_fix_version": {
+    "pre_fix": {
+      "total_trades": 1917,
+      "win_rate": 0.4184,
+      "profit_factor": 1.7696,
+      "price_stop_loss_n": 316,
+      "price_stop_loss_win_rate": 0.3386,
+      "price_stop_loss_profit_factor": 0.2929
+    },
+    "post_fix": {
+      "total_trades": 1917,
+      "win_rate": 0.4184,
+      "profit_factor": 1.7699,
+      "price_stop_loss_n": 316,
+      "price_stop_loss_win_rate": 0.3386,
+      "price_stop_loss_profit_factor": 0.2929
+    },
+    "delta_summary": "重跑后总交易数与修复前完全一致(1917笔，186只标的、5年窗口、同一批次triggers)。整体win_rate=0.4184与修复前完全一致；profit_factor从1.7696变为1.7699(变化+0.0003，四位小数级别的噪声，不构成实质变化)；avg_return_pct从0.029145变为0.029154(+0.000009)。止损段(price_stop_loss)316笔完全不变：win_rate=0.3386、profit_factor=0.2929，四位小数下逐位相同。这些微小差异的根源是同一天内两次拉取行情缓存之间收盘价/复权价格发生的自然微小修订(约68/186只标的的个别交易日return_pct出现1e-4~1e-3量级漂移，其中1笔INTC交易因MACD/RSI在临界值附近，价格微调导致exit_state触发日从2023-07-06变为2023-07-05，使该笔持仓天数由36变35天)——与本次_fresh()代码修复本身无关(该修复根本没有被向量化回测调用到，见vectorization_finding)。结论：_fresh()修复对double_bottom(5年窗口)回测结果没有实质影响，此前1917笔/0.4184/1.7696的结论依然成立。"
+  },
+  "verification_spot_check": [
+    {
+      "symbol": "KNSA",
+      "entry_date": "2021-12-02",
+      "exit_date": "2021-12-30",
+      "exit_reason": "exit_signal",
+      "check_exit_signal_triggered": true,
+      "evidence": {
+        "ma_bearish_now": true,
+        "macd_bearish_now": true,
+        "rsi_bearish_now": true,
+        "state_was_false_lookback_days_ago": true,
+        "latest_values": {
+          "macd": -0.054,
+          "macds": 0.0826,
+          "rsi_6": 30.35
+        }
+      }
+    },
+    {
+      "symbol": "MTB",
+      "entry_date": "2022-05-27",
+      "exit_date": "2022-06-16",
+      "exit_reason": "exit_signal",
+      "check_exit_signal_triggered": true,
+      "evidence": {
+        "ma_bearish_now": true,
+        "macd_bearish_now": true,
+        "rsi_bearish_now": true,
+        "state_was_false_lookback_days_ago": true,
+        "latest_values": {
+          "macd": -1.0624,
+          "macds": 0.55,
+          "rsi_6": 25.56
+        }
+      }
+    },
+    {
+      "symbol": "HBAN",
+      "entry_date": "2023-01-26",
+      "exit_date": "2023-02-23",
+      "exit_reason": "exit_signal",
+      "check_exit_signal_triggered": true,
+      "evidence": {
+        "ma_bearish_now": true,
+        "macd_bearish_now": true,
+        "rsi_bearish_now": true,
+        "state_was_false_lookback_days_ago": true,
+        "latest_values": {
+          "macd": 0.1103,
+          "macds": 0.1695,
+          "rsi_6": 42.83
+        }
+      }
+    },
+    {
+      "symbol": "HOOD",
+      "entry_date": "2024-05-17",
+      "exit_date": "2024-07-30",
+      "exit_reason": "exit_signal",
+      "check_exit_signal_triggered": true,
+      "evidence": {
+        "ma_bearish_now": true,
+        "macd_bearish_now": true,
+        "rsi_bearish_now": true,
+        "state_was_false_lookback_days_ago": true,
+        "latest_values": {
+          "macd": -0.2178,
+          "macds": 0.1535,
+          "rsi_6": 20.84
+        }
+      }
+    },
+    {
+      "symbol": "ROIV",
+      "entry_date": "2025-06-04",
+      "exit_date": "2025-07-07",
+      "exit_reason": "exit_signal",
+      "check_exit_signal_triggered": true,
+      "evidence": {
+        "ma_bearish_now": true,
+        "macd_bearish_now": true,
+        "rsi_bearish_now": true,
+        "state_was_false_lookback_days_ago": true,
+        "latest_values": {
+          "macd": -0.0191,
+          "macds": 0.0661,
+          "rsi_6": 23.91
+        }
+      }
+    },
+    {
+      "symbol": "KEY",
+      "entry_date": "2026-06-08",
+      "exit_date": "2026-07-28",
+      "exit_reason": "exit_signal",
+      "check_exit_signal_triggered": true,
+      "evidence": {
+        "ma_bearish_now": true,
+        "macd_bearish_now": true,
+        "rsi_bearish_now": true,
+        "state_was_false_lookback_days_ago": true,
+        "latest_values": {
+          "macd": 0.047,
+          "macds": 0.1975,
+          "rsi_6": 36.32
+        }
+      }
+    },
+    {
+      "symbol": "RVMD",
+      "entry_date": "2021-11-01",
+      "exit_date": "2021-11-23",
+      "exit_reason": "exit_signal",
+      "check_exit_signal_triggered": true,
+      "evidence": {
+        "ma_bearish_now": true,
+        "macd_bearish_now": true,
+        "rsi_bearish_now": true,
+        "state_was_false_lookback_days_ago": true,
+        "latest_values": {
+          "macd": 0.0485,
+          "macds": 0.5367,
+          "rsi_6": 24.85
+        }
+      }
+    },
+    {
+      "symbol": "ZTS",
+      "entry_date": "2021-12-08",
+      "exit_date": "2022-01-07",
+      "exit_reason": "exit_signal",
+      "check_exit_signal_triggered": true,
+      "evidence": {
+        "ma_bearish_now": true,
+        "macd_bearish_now": true,
+        "rsi_bearish_now": true,
+        "state_was_false_lookback_days_ago": true,
+        "latest_values": {
+          "macd": -1.1396,
+          "macds": 2.6783,
+          "rsi_6": 14.29
+        }
+      }
+    },
+    {
+      "symbol": "ADBE",
+      "entry_date": "2023-08-31",
+      "exit_date": "2023-09-21",
+      "exit_reason": "exit_signal",
+      "check_exit_signal_triggered": true,
+      "evidence": {
+        "ma_bearish_now": true,
+        "macd_bearish_now": true,
+        "rsi_bearish_now": true,
+        "state_was_false_lookback_days_ago": true,
+        "latest_values": {
+          "macd": 1.5367,
+          "macds": 6.4397,
+          "rsi_6": 26.99
+        }
+      }
+    },
+    {
+      "symbol": "LITE",
+      "entry_date": "2024-06-13",
+      "exit_date": "2024-07-26",
+      "exit_reason": "exit_signal",
+      "check_exit_signal_triggered": true,
+      "evidence": {
+        "ma_bearish_now": true,
+        "macd_bearish_now": true,
+        "rsi_bearish_now": true,
+        "state_was_false_lookback_days_ago": true,
+        "latest_values": {
+          "macd": 0.8906,
+          "macds": 1.8468,
+          "rsi_6": 32.82
+        }
+      }
+    }
+  ],
+  "verification_note": "抽查10笔exit_reason=exit_signal的交易(price_stop_loss退出不经过exit_state/check_exit_signal()判定，止损逻辑完全独立，故不纳入本项抽查)，跨['2021', '2022', '2023', '2024', '2025', '2026']多个年份分层抽样，用修复后的check_exit_signal()点位函数对每笔交易的exit_date独立复核：10/10笔确认triggered=True，全部通过。另需说明：check_exit_signal()默认lookback=10，其triggered判定基于exit_state[t]=True且_fresh()判定当前run未超过10天；而回测本身的向量化exit rising edge用的是更严格的'exit_state[t]=True且exit_state[t-1]=False'(run长度恰好=1)，是_fresh()判定的一个严格子集——任何满足回测严格rising edge定义的交易日，天然也满足_fresh()的'run长度<=lookback'判定(1<=10)，无论_fresh()是否有bug都必然triggered=True。这正是本次核心发现的另一体现：回测使用的触发定义从未依赖过_fresh()的具体实现，所以此次抽查的100%通过率是必然结果，不是巧合。",
+  "_build_elapsed_seconds": 0.1
+}

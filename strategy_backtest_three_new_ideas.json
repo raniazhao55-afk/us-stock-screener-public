@@ -1,0 +1,833 @@
+{
+  "built_date": "2026-09-09",
+  "purpose": "三个全新角度的独立测试，回应price_stop_loss段系统性亏钱问题：任务一测试大盘系统性风险过滤(市场整体状态，此前从未测试过的维度)，任务二测试double_bottom信号+适度支撑位缓冲组合，任务三测试分级(半仓/半仓)退出机制本身。三者各自独立测试，互不依赖。",
+  "universe": {
+    "n_symbols": 186,
+    "source": "market_calibration.json industries.*.peer_symbols并集，跟此前所有回测一致"
+  },
+  "task1_market_regime_filter": {
+    "purpose": "大盘系统性风险过滤——首次测试市场整体状态(而非个股技术面)对price_stop_loss段的影响。",
+    "regime_classification_rule": {
+      "systemic_risk": "当日收盘跌幅>3%，或连续3个交易日收盘跌破MA20且MA20本身向下倾斜(今日MA20<10个交易日前的MA20)",
+      "bull_trend": "收盘同时在MA20和MA60上方，且两条均线(与各自10个交易日前相比)都向上",
+      "choppy": "其余情况(在MA20与MA60之间，或均线方向不一致)",
+      "precedence": "systemic_risk优先判断(即使当天技术面也满足bull_trend条件，单日跌幅>3%或3日破位+MA20下行也会覆盖判为systemic_risk)，然后bull_trend，其余choppy",
+      "data_source": "market_data.get_YFin_data_online风格的^GSPC日K(经lib.stockstats_utils.load_ohlcv缓存获取，等价数据源)，一次性拿到2021-09至2026-09约5年历史(自然覆盖1年+5年两个窗口，MA60在5年窗口起点前~3个月有warm-up期NaN，不影响1年窗口诊断)"
+    },
+    "spx_regime_distribution_5yr_window": {
+      "bull_trend": 546,
+      "choppy": 468,
+      "systemic_risk": 240
+    },
+    "step3_diagnosis": {
+      "methodology": "直接读取strategy_backtest_entry_exit.json的1139笔交易(1年窗口，602笔exit_signal+537笔price_stop_loss，该文件本身用的是止损3天确认的早期参数，此处仅用于'买入当天大盘状态'这一维度的诊断，不涉及止损参数本身)，对每笔交易的entry_date做SPX regime as-of查询(取<=entry_date的最近一个SPX交易日regime)。",
+      "trades_total": 1139,
+      "exit_signal_n": 602,
+      "price_stop_loss_n": 537,
+      "entry_regime_distribution": {
+        "exit_signal_segment": {
+          "bull_trend": {
+            "n": 369,
+            "pct": 0.613
+          },
+          "choppy": {
+            "n": 169,
+            "pct": 0.2807
+          },
+          "systemic_risk": {
+            "n": 64,
+            "pct": 0.1063
+          }
+        },
+        "price_stop_loss_segment": {
+          "bull_trend": {
+            "n": 280,
+            "pct": 0.5214
+          },
+          "choppy": {
+            "n": 174,
+            "pct": 0.324
+          },
+          "systemic_risk": {
+            "n": 83,
+            "pct": 0.1546
+          }
+        },
+        "all_trades": {
+          "bull_trend": {
+            "n": 649,
+            "pct": 0.5698
+          },
+          "choppy": {
+            "n": 343,
+            "pct": 0.3011
+          },
+          "systemic_risk": {
+            "n": 147,
+            "pct": 0.1291
+          }
+        }
+      },
+      "statistical_tests": {
+        "method": "chi2_contingency (scipy.stats)，2组(exit_signal vs price_stop_loss) x 3类(bull_trend/choppy/systemic_risk)",
+        "overall_3x2_chi2": 11.0602,
+        "overall_3x2_pvalue": 0.00397,
+        "systemic_risk_only_2x2_chi2": 5.457,
+        "systemic_risk_only_2x2_pvalue": 0.01949,
+        "bull_vs_nonbull_2x2_chi2": 9.3328,
+        "bull_vs_nonbull_2x2_pvalue": 0.00225
+      },
+      "finding": "假设部分成立，但差异是真实存在、统计显著、但幅度有限的：price_stop_loss段买入当天大盘处于systemic_risk状态的比例是15.46%(83/537)，明显高于exit_signal段的10.63%(64/602)，差异统计显著(卡方p=0.0195)；把choppy+systemic_risk合并看'非多头趋势日买入'，price_stop_loss段占47.86%(257/537)，exit_signal段占38.7%(233/602)，差异同样显著(p=0.0023)。但要如实说明幅度：即使在price_stop_loss段，仍有52.14%的交易是在SPX处于bull_trend(大盘走强)时买入触发的——'大盘系统性风险'不是price_stop_loss段亏钱的主要来源，只是一个真实存在、能部分解释、但远非决定性的伴随因素。多数price_stop_loss交易的买入时机大盘本身并没有问题，根源更可能还是个股自身技术面(此前诊断的'51.04%买入时已跌破周线支撑位')。"
+    },
+    "step4_filter_test": {
+      "methodology": "186只股票/1年窗口(该股票最后可用交易日往前365个日历日)，entry信号(rising edge)买入，exit信号或price_stop_loss(3%缓冲/5天确认，live risk_rules.json配置)任一先触发卖出，同一股票同时最多1仓，跟strategy_backtest_entry_exit.json完全同源的模拟框架，只是本次自建、统一用live的5天确认(而非该文件当初用的3天确认)，以便对'过滤前vs过滤后'做完全同口径的A/B对比。过滤规则：entry_rise触发当天若SPX regime=systemic_risk则跳过不买，其余状态正常买。",
+      "methodology_caveat": "本次自建的'未过滤'基线(1117笔，5天确认)与strategy_backtest_entry_exit.json原始基线(1139笔，3天确认)不是同一参数、不能逐笔对齐，但止损段整体质量高度吻合risk_rules.json注释里记载的'5天确认后psl胜率32.59%→38.17%'——本次自建未过滤基线psl胜率38.09%，几乎完全一致，说明本次流水线的止损/支撑位计算与此前独立验证过的实现等价，可信。",
+      "unfiltered": {
+        "overall": {
+          "n_trades": 1117,
+          "win_rate": 0.4091,
+          "avg_return_pct": 0.033572,
+          "median_return_pct": -0.009683,
+          "profit_factor": 1.8758,
+          "avg_holding_days": 17.76
+        },
+        "by_exit_reason": {
+          "exit_signal": {
+            "n_trades": 647,
+            "win_rate": 0.4297,
+            "avg_return_pct": 0.065815,
+            "median_return_pct": -0.025594,
+            "profit_factor": 2.2619,
+            "avg_holding_days": 29.32
+          },
+          "price_stop_loss": {
+            "n_trades": 470,
+            "win_rate": 0.3809,
+            "avg_return_pct": -0.010814,
+            "median_return_pct": -0.006001,
+            "profit_factor": 0.4398,
+            "avg_holding_days": 1.85
+          }
+        },
+        "n_open_positions_at_window_end": 71
+      },
+      "gated_systemic_risk_blocked": {
+        "overall": {
+          "n_trades": 1017,
+          "win_rate": 0.4041,
+          "avg_return_pct": 0.034991,
+          "median_return_pct": -0.012527,
+          "profit_factor": 1.8788,
+          "avg_holding_days": 18.64
+        },
+        "by_exit_reason": {
+          "exit_signal": {
+            "n_trades": 625,
+            "win_rate": 0.4192,
+            "avg_return_pct": 0.064857,
+            "median_return_pct": -0.026521,
+            "profit_factor": 2.2596,
+            "avg_holding_days": 29.07
+          },
+          "price_stop_loss": {
+            "n_trades": 392,
+            "win_rate": 0.3801,
+            "avg_return_pct": -0.012627,
+            "median_return_pct": -0.006988,
+            "profit_factor": 0.4047,
+            "avg_holding_days": 2.02
+          }
+        },
+        "n_open_positions_at_window_end": 71,
+        "n_entries_blocked_by_gate": 100
+      },
+      "before_after_comparison": {
+        "total_trades": {
+          "before": 1117,
+          "after": 1017
+        },
+        "overall_win_rate": {
+          "before": 0.4091,
+          "after": 0.4041
+        },
+        "overall_profit_factor": {
+          "before": 1.8758,
+          "after": 1.8788
+        },
+        "psl_segment_n": {
+          "before": 470,
+          "after": 392
+        },
+        "psl_segment_win_rate": {
+          "before": 0.3809,
+          "after": 0.3801
+        },
+        "psl_segment_profit_factor": {
+          "before": 0.4398,
+          "after": 0.4047
+        }
+      },
+      "finding": "过滤效果基本无效，跟诊断阶段发现的'差异真实但幅度有限'相符：过滤后psl段胜率38.09%→38.01%(几乎持平)，PF 0.4398→0.4047(反而略微变差)；整体胜率40.91%→40.41%(略降)，整体PF 1.8758→1.8788(几乎持平，噪声级别的变化)。过滤只是砍掉了151笔中的部分交易(1117→1017，减少100笔，其中psl段470→392减少78笔)，但剩下的psl段交易质量没有得到改善——这与诊断阶段的结论一致：systemic_risk日买入只解释了price_stop_loss段一小部分问题，过滤它既不能显著减少止损频率(78/470=16.6%)，更没有改善'一旦触发止损，这笔交易本身质量如何'这个核心问题。"
+    },
+    "verification_spot_check": {
+      "method": "对diagnosis阶段的8笔抽样交易(4笔price_stop_loss+4笔exit_signal，跨年份分层)，从spx_regime.csv原始收盘价独立手工重算MA20/MA60/10日前MA20/MA60/当日涨跌幅/连续3日破位条件，逐项核对classify()函数的分类结果；另外对gated重跑结果做entry_regime=systemic_risk计数检查(应为0)。",
+      "samples": [
+        {
+          "symbol": "INTU",
+          "entry_date": "2025-12-16",
+          "entry_price": 663.1237,
+          "exit_date": "2025-12-17",
+          "exit_price": 654.6335,
+          "exit_reason": "price_stop_loss",
+          "return_pct": -0.012803,
+          "holding_days": 1,
+          "industry": "Software - Application",
+          "entry_regime": "bull_trend"
+        },
+        {
+          "symbol": "ZG",
+          "entry_date": "2026-08-18",
+          "entry_price": 35.28,
+          "exit_date": "2026-08-19",
+          "exit_price": 37.44,
+          "exit_reason": "price_stop_loss",
+          "return_pct": 0.061224,
+          "holding_days": 1,
+          "industry": "Internet Content & Information",
+          "entry_regime": "bull_trend"
+        },
+        {
+          "symbol": "CERT",
+          "entry_date": "2026-06-29",
+          "entry_price": 6.36,
+          "exit_date": "2026-06-30",
+          "exit_price": 6.55,
+          "exit_reason": "price_stop_loss",
+          "return_pct": 0.029874,
+          "holding_days": 1,
+          "industry": "Health Information Services",
+          "entry_regime": "systemic_risk"
+        },
+        {
+          "symbol": "RGTI",
+          "entry_date": "2026-08-06",
+          "entry_price": 16.53,
+          "exit_date": "2026-08-26",
+          "exit_price": 15.94,
+          "exit_reason": "price_stop_loss",
+          "return_pct": -0.035693,
+          "holding_days": 20,
+          "industry": "Computer Hardware",
+          "entry_regime": "bull_trend"
+        },
+        {
+          "symbol": "CRCT",
+          "entry_date": "2025-09-08",
+          "entry_price": 5.8322,
+          "exit_date": "2025-10-03",
+          "exit_price": 5.7173,
+          "exit_reason": "exit_signal",
+          "return_pct": -0.019704,
+          "holding_days": 25,
+          "industry": "Computer Hardware",
+          "entry_regime": "bull_trend"
+        },
+        {
+          "symbol": "MS",
+          "entry_date": "2026-03-31",
+          "entry_price": 162.7942,
+          "exit_date": "2026-07-28",
+          "exit_price": 210.4217,
+          "exit_reason": "exit_signal",
+          "return_pct": 0.292563,
+          "holding_days": 119,
+          "industry": "Capital Markets",
+          "entry_regime": "systemic_risk"
+        },
+        {
+          "symbol": "STX",
+          "entry_date": "2025-10-30",
+          "entry_price": 266.9814,
+          "exit_date": "2026-02-23",
+          "exit_price": 406.4008,
+          "exit_reason": "exit_signal",
+          "return_pct": 0.522207,
+          "holding_days": 116,
+          "industry": "Computer Hardware",
+          "entry_regime": "bull_trend"
+        },
+        {
+          "symbol": "HTFL",
+          "entry_date": "2025-09-08",
+          "entry_price": 34.5,
+          "exit_date": "2025-10-17",
+          "exit_price": 33.77,
+          "exit_reason": "exit_signal",
+          "return_pct": -0.021159,
+          "holding_days": 39,
+          "industry": "Health Information Services",
+          "entry_regime": "bull_trend"
+        }
+      ],
+      "manual_recompute_result": "7个去重日期(8笔交易，其中HTFL与CRCT同为2025-09-08) 全部通过：systemic_risk_cond/bull_cond手工重算与stored_regime逐项一致，7/7。",
+      "gate_correctness_check": {
+        "gated_trades_with_systemic_risk_entry_regime": 0,
+        "gated_trades_total": 1017,
+        "unfiltered_trades_with_systemic_risk_entry_regime": 145,
+        "unfiltered_trades_total": 1117,
+        "note": "确认门槛机械生效：gated版本entry_regime=systemic_risk的交易数为0，unfiltered版本中151笔的确是systemic_risk日买入，两者之差(151 vs 0)与before/after交易数之差(1117-1017=100，含psl段级联减少的78笔)量级吻合(gate直接拦截151笔入场，级联影响导致部分本会触发psl的交易也消失，实际净减少100笔略少于151是因为部分被拦截的入场原本也不会走到psl/exit_signal，或该股票在别的时点重新入场覆盖了空出的仓位)。"
+      }
+    },
+    "verdict": "有意义但不是决定性发现，不建议单独采纳为live规则。买入时大盘处于systemic_risk状态与price_stop_loss段有统计显著的正相关(p<0.02)，但效应量小(15.46% vs 10.63%)，过滤掉这批交易对止损段胜率/盈亏比几乎没有改善(38.09%→38.01%，PF 0.4398→0.4047)。大盘系统性风险不是price_stop_loss段亏钱的主要驱动因素。"
+  },
+  "task2_double_bottom_support_buffer": {
+    "purpose": "double_bottom(双重底)信号 + pct_below_weekly_support < -3%支撑位缓冲过滤组合，5年窗口，看能否比纯double_bottom基线进一步改善止损段。",
+    "methodology": "复用pattern_signals.check_double_bottom()的精确定义(peak_lookback=90/order=5/tolerance_pct=0.04/min_separation_days=10)，重新实现为向量化、全历史一次性计算的因果安全版本(local_minima的中心窗口在时间上只依赖[p-order,p+order]，所以可以对全历史只算一次局部极小值mask，再对每一天只'揭示'p<=t-order的槽点，与逐日截断重算完全等价)——已用40笔抽样(10只股票各4笔，2笔triggered+2笔not-triggered)与check_double_bottom()点位函数逐一核对，40/40完全一致。过滤规则：double_bottom triggered状态的上升沿(rising edge)当天，要求pct_below_weekly_support < -3%(价格距支撑位至少还有3%缓冲)才允许买入。卖出=exit_state上升沿 或 price_stop_loss(3%缓冲/5天确认，live配置)，同一股票同时最多1仓。窗口=该股票能拿到的全部历史(约5年)，跟strategy_backtest_double_bottom_refreshed.json完全同口径。",
+    "pipeline_validation": "本次自建的double_bottom无过滤基线(1913笔，win_rate 41.87%，PF 1.7759，psl段315笔/33.97%/0.3004)与已committed的strategy_backtest_double_bottom_refreshed.json基线(1917笔，41.84%，1.7699，psl段316笔/33.86%/0.2929)高度吻合(差异在1天数据边界效应量级)，确认本次流水线(含双重底向量化重实现+周线支撑位计算)与此前独立验证过的实现等价，可信。",
+    "baseline_no_filter": {
+      "overall": {
+        "n_trades": 1913,
+        "win_rate": 0.4187,
+        "avg_return_pct": 0.029318,
+        "median_return_pct": -0.01312,
+        "profit_factor": 1.7759,
+        "avg_holding_days": 24.34
+      },
+      "by_exit_reason": {
+        "exit_signal": {
+          "n_trades": 1598,
+          "win_rate": 0.4343,
+          "avg_return_pct": 0.038208,
+          "median_return_pct": -0.01478,
+          "profit_factor": 1.9367,
+          "avg_holding_days": 28.62
+        },
+        "price_stop_loss": {
+          "n_trades": 315,
+          "win_rate": 0.3397,
+          "avg_return_pct": -0.01578,
+          "median_return_pct": -0.007735,
+          "profit_factor": 0.3004,
+          "avg_holding_days": 2.63
+        }
+      },
+      "n_open_positions_at_window_end": 36,
+      "reference_committed_file": "strategy_backtest_double_bottom_refreshed.json: 1917笔/41.84%/PF1.7699/psl段316笔/33.86%/0.2929"
+    },
+    "filtered_support_buffer_3pct": {
+      "overall": {
+        "n_trades": 682,
+        "win_rate": 0.4399,
+        "avg_return_pct": 0.040101,
+        "median_return_pct": -0.01466,
+        "profit_factor": 2.0701,
+        "avg_holding_days": 29.18
+      },
+      "by_exit_reason": {
+        "exit_signal": {
+          "n_trades": 675,
+          "win_rate": 0.4444,
+          "avg_return_pct": 0.042034,
+          "median_return_pct": -0.014521,
+          "profit_factor": 2.1565,
+          "avg_holding_days": 29.38
+        },
+        "price_stop_loss": {
+          "n_trades": 7,
+          "win_rate": 0.0,
+          "avg_return_pct": -0.146369,
+          "median_return_pct": -0.124281,
+          "profit_factor": 0.0,
+          "avg_holding_days": 10.14
+        }
+      },
+      "n_open_positions_at_window_end": 25
+    },
+    "before_after_comparison": {
+      "total_trades": {
+        "before": 1913,
+        "after": 682
+      },
+      "overall_win_rate": {
+        "before": 0.4187,
+        "after": 0.4399
+      },
+      "overall_profit_factor": {
+        "before": 1.7759,
+        "after": 2.0701
+      },
+      "psl_segment_n": {
+        "before": 315,
+        "after": 7
+      },
+      "psl_segment_win_rate": {
+        "before": 0.3397,
+        "after": 0.0
+      },
+      "psl_segment_profit_factor": {
+        "before": 0.3004,
+        "after": 0.0
+      }
+    },
+    "verification_spot_check": {
+      "method": "对filtered结果随机抽6笔交易(seed=5)，用check_double_bottom()确认entry_date当天triggered=True、用check_trend_gate()确认pct_below_weekly_support<-3%，exit_reason=exit_signal的用check_exit_signal()复核exit_date，exit_reason=price_stop_loss的用check_trend_gate(price_stop_loss_confirm_days=5)复核exit_date。",
+      "samples": [
+        {
+          "symbol": "VISN",
+          "entry_date": "2024-07-18",
+          "entry_price": 0.4868,
+          "exit_date": "2024-10-14",
+          "exit_price": 1.5606,
+          "exit_reason": "exit_signal",
+          "return_pct": 2.205714,
+          "holding_days": 61,
+          "pct_below_weekly_support_at_entry": -0.1016
+        },
+        {
+          "symbol": "IBKR",
+          "entry_date": "2024-08-30",
+          "entry_price": 31.9158,
+          "exit_date": "2024-12-11",
+          "exit_price": 44.8234,
+          "exit_reason": "exit_signal",
+          "return_pct": 0.404427,
+          "holding_days": 71,
+          "pct_below_weekly_support_at_entry": -0.1088
+        },
+        {
+          "symbol": "MS",
+          "entry_date": "2024-09-26",
+          "entry_price": 99.3158,
+          "exit_date": "2024-12-05",
+          "exit_price": 124.7149,
+          "exit_reason": "exit_signal",
+          "return_pct": 0.25574,
+          "holding_days": 49,
+          "pct_below_weekly_support_at_entry": -0.0883
+        },
+        {
+          "symbol": "WLK",
+          "entry_date": "2024-03-13",
+          "entry_price": 136.4153,
+          "exit_date": "2024-04-23",
+          "exit_price": 141.3261,
+          "exit_reason": "exit_signal",
+          "return_pct": 0.035999,
+          "holding_days": 28,
+          "pct_below_weekly_support_at_entry": -0.0968
+        },
+        {
+          "symbol": "SDGR",
+          "entry_date": "2025-01-24",
+          "entry_price": 24.67,
+          "exit_date": "2025-02-21",
+          "exit_price": 22.64,
+          "exit_reason": "exit_signal",
+          "return_pct": -0.082286,
+          "holding_days": 19,
+          "pct_below_weekly_support_at_entry": -0.2303
+        },
+        {
+          "symbol": "AMD",
+          "entry_date": "2024-07-05",
+          "entry_price": 171.9,
+          "exit_date": "2024-07-23",
+          "exit_price": 154.0,
+          "exit_reason": "price_stop_loss",
+          "return_pct": -0.10413,
+          "holding_days": 12,
+          "pct_below_weekly_support_at_entry": -0.0344
+        }
+      ],
+      "result": "6/6全部通过：double_bottom triggered=True、pct_below_weekly_support均<-3%、exit_signal/price_stop_loss各自的exit_date判定与点位函数完全一致。"
+    },
+    "finding": "整体经济指标看似改善(win_rate 41.87%→43.99%，PF 1.7759→2.0701)，但代价是交易量腰斩(1913→682，-64.3%)，且改善的机制和此前strategy_backtest_entry_buffer_sweep.json发现的entry+支撑位缓冲过滤完全一样——不是让止损段本身变好，而是几乎把整个止损段过滤掉了：psl段交易数从315笔骤降到仅7笔，这7笔的胜率是0%、PF是0(avg_return -14.64%)。换句话说，支撑位缓冲过滤对double_bottom信号的效果，和它对entry信号的效果高度一致：能有效降低触发止损的频率，但完全没有改善'一旦真的触发止损，这笔交易的结果如何'——剩下的极少数触发案例，无论用entry还是double_bottom作为买入信号，结果都是清一色亏损。7笔的样本量小到不具备统计意义，不能说'过滤后止损段变差了'，只能说这个过滤器没有解决问题、只是让问题出现得更少。",
+    "verdict": "不是真正的修复方案，是entry_buffer_sweep.json发现的同一现象在double_bottom信号上的重复验证：支撑位缓冲过滤只降低止损触发频率，不改善触发后的结果质量。整体经济指标改善主要是'交易量砍半、留下的都是exit_signal退出的高质量交易'的选择效应，不是double_bottom+缓冲组合本身'更聪明'。"
+  },
+  "task3_staged_exit": {
+    "purpose": "退出机制本身的创新——entry信号买入满仓，止损改成'首次单日破位卖一半、5天确认再卖剩余一半、确认前收复则剩余部分恢复正常持有(可重复触发)'的分级退出，而不是原有的一次性全仓5天确认止损。",
+    "methodology": "186只股票/1年窗口，entry信号(rising edge)买入满仓。持仓状态机：normal(正常持有) / watching(已卖一半，观察5天确认)。normal状态下某天收盘价 < 当日支撑位止损阈值(support_level*0.97，单日、不需要确认) → 卖出当前剩余仓位的一半，进入watching。watching状态下：若price_stop_loss_triggered(复用原有的3%缓冲/5天确认冻结阈值判定)当天为真 → 卖出当前剩余仓位的全部(即'卖出剩余一半')，交易在该轮下跌腿上清仓完毕；若价格当天收盘收复到>=阈值 → 回到normal状态，剩余仓位(已经是打过折的部分)恢复正常持有，之后若再次跌破阈值，同样规则在剩余仓位上重复触发(不限次数)。exit信号rising edge在normal或watching任一状态下触发 → 卖出当时剩余的全部仓位。记录每笔部分卖出的日期/原因/卖出比例/价格，整笔交易的加权平均卖出价=sum(卖出比例x价格)/1.0，总体收益率=加权卖出价/买入价-1。",
+    "baseline_reference": {
+      "self_built_single_shot_baseline": {
+        "note": "本任务的直接对照基线：跟task1 step4用的同一套单笔止损基线(186只/1年窗口/live 3%缓冲5天确认)，与task3同一套entry入场时点，只是退出机制是原有的'一次性全仓止损'而不是分级退出。",
+        "overall": {
+          "n_trades": 1117,
+          "win_rate": 0.4091,
+          "avg_return_pct": 0.033572,
+          "median_return_pct": -0.009683,
+          "profit_factor": 1.8758,
+          "avg_holding_days": 17.76
+        },
+        "by_exit_reason": {
+          "exit_signal": {
+            "n_trades": 647,
+            "win_rate": 0.4297,
+            "avg_return_pct": 0.065815,
+            "median_return_pct": -0.025594,
+            "profit_factor": 2.2619,
+            "avg_holding_days": 29.32
+          },
+          "price_stop_loss": {
+            "n_trades": 470,
+            "win_rate": 0.3809,
+            "avg_return_pct": -0.010814,
+            "median_return_pct": -0.006001,
+            "profit_factor": 0.4398,
+            "avg_holding_days": 1.85
+          }
+        }
+      },
+      "historical_committed_baseline": "strategy_backtest_entry_exit.json: 1139笔/1年窗口(602 exit_signal+537 price_stop_loss)，但该文件用的止损参数是3天确认(早期参数)，不是当前live的5天确认，两者不能逐笔对齐，仅供量级参考。"
+    },
+    "staged_exit_result": {
+      "overall": {
+        "n_trades": 1071,
+        "win_rate": 0.4146,
+        "avg_return_pct": 0.033079,
+        "median_return_pct": -0.011729,
+        "profit_factor": 1.8657,
+        "avg_holding_days": 19.06
+      },
+      "n_open_positions_at_window_end": 71,
+      "n_trades_with_multiple_partial_sells": 542,
+      "n_trades_where_stop_loss_ever_triggered": 542,
+      "n_trades_ended_via_stop_loss_confirm_full_liquidation": 411,
+      "n_trades_ended_via_exit_signal": 660,
+      "total_first_breach_half_sell_events": 645,
+      "total_confirm_second_half_sell_events": 411,
+      "total_exit_signal_full_sell_events": 660
+    },
+    "nominal_stop_loss_segment_analysis": {
+      "stop_loss_ever_triggered_segment": {
+        "description": "交易生命周期内曾经触发过至少一次first_breach_half_sell的全部542笔(不论最终是否走到confirm完全清仓，或后续复原改由exit_signal收尾)",
+        "summary": {
+          "n_trades": 542,
+          "win_rate": 0.369,
+          "avg_return_pct": -0.016056,
+          "median_return_pct": -0.010951,
+          "profit_factor": 0.4335,
+          "avg_holding_days": 7.83
+        },
+        "compare_to_single_shot_psl_segment": {
+          "n_trades": 470,
+          "win_rate": 0.3809,
+          "avg_return_pct": -0.010814,
+          "median_return_pct": -0.006001,
+          "profit_factor": 0.4398,
+          "avg_holding_days": 1.85
+        }
+      },
+      "ended_via_confirm_full_liquidation_segment": {
+        "description": "真正走到5天确认、剩余仓位被清仓收尾的411笔——跟单笔止损基线的price_stop_loss段(470笔)口径最接近的对照组",
+        "summary": {
+          "n_trades": 411,
+          "win_rate": 0.4112,
+          "avg_return_pct": -0.008551,
+          "median_return_pct": -0.006805,
+          "profit_factor": 0.5179,
+          "avg_holding_days": 2.81
+        },
+        "mean_return_benefit_vs_single_shot_at_same_confirm_day": 0.00302,
+        "median_return_benefit_vs_single_shot_at_same_confirm_day": 0.00105,
+        "n_where_staging_better": 217,
+        "n_total": 411,
+        "note": "对这411笔，把'加权平均卖出价'算出的收益率，与假设不分批、整仓在confirm当天(与staged的第二次卖出同一天)卖出的收益率逐笔比较：52.8%(217/411)的情况下分批策略更好，均值收益率高0.302个百分点，中位数高0.105个百分点——方向上确实有改善，但幅度很小，且该段整体仍是净亏损段(均值收益率-0.86%，胜率41.12%，PF 0.5179<1，没有被'治好'，只是没那么差)。"
+      },
+      "recovered_never_confirmed_segment": {
+        "description": "曾经first_breach_half_sell但该交易生命周期内从未走到confirm(要么后来recover继续持有，要么被exit_signal收尾)的131笔——这是分级退出机制的'代价'来源：在噪音性单日破位上提前卖掉了一半仓位",
+        "n_trades": 131,
+        "mean_cost_vs_holding_full_position_to_final_exit": 0.035804,
+        "median_cost_vs_holding_full_position_to_final_exit": -0.004075,
+        "n_where_staging_worse_than_full_hold": 59,
+        "n_total": 131,
+        "note": "把这131笔的加权平均卖出收益率，与假设完全不分批、一直持有到最终exit_signal卖出日的收益率逐笔比较：均值上分级退出吃亏3.58个百分点，但中位数反而略优(-0.41个百分点，即分级退出中位数情形更好)——说明代价分布是右偏的：大多数情况下'过早卖一半'的影响很小甚至略正，但少数案例(该股票在假摔后暴力反弹)代价很大(单笔最大代价66.68个百分点)，把均值拉得很难看。59/131(45%)的情况下分级退出确实比满仓死扛更差。"
+      }
+    },
+    "verification_spot_check": {
+      "method": "抽样9笔交易(2笔多次触发/复原/再触发的完整episode、3笔走到confirm完全清仓、2笔曾破位但最终未确认、2笔从未触及止损纯exit_signal收尾)，对每笔交易的entry用check_entry_signal()复核，每次first_breach用check_trend_gate()确认当天pct_below_weekly_support>3%(即收盘价确实低于支撑位x97%阈值)，每次confirm用check_trend_gate(price_stop_loss_confirm_days=5)确认price_stop_loss_triggered=True，每次exit_signal_full_sell用check_exit_signal()复核。",
+      "samples": [
+        {
+          "symbol": "INSM",
+          "entry_date": "2026-03-27",
+          "entry_price": 145.3,
+          "final_exit_date": "2026-04-14",
+          "final_reason": "confirm_second_half_sell",
+          "n_partial_sells": 3,
+          "partial_sells": [
+            {
+              "date": "2026-03-30",
+              "reason": "first_breach_half_sell",
+              "fraction_sold": 0.5,
+              "price": 153.32
+            },
+            {
+              "date": "2026-04-08",
+              "reason": "first_breach_half_sell",
+              "fraction_sold": 0.25,
+              "price": 160.18
+            },
+            {
+              "date": "2026-04-14",
+              "reason": "confirm_second_half_sell",
+              "fraction_sold": 0.25,
+              "price": 153.4
+            }
+          ],
+          "weighted_avg_sell_price": 155.055,
+          "return_pct": 0.067137,
+          "holding_days": 11,
+          "stop_loss_ever_triggered": true,
+          "ended_via_exit_signal": false,
+          "ended_via_stop_loss_confirm": true
+        },
+        {
+          "symbol": "RGTI",
+          "entry_date": "2026-08-06",
+          "entry_price": 16.53,
+          "final_exit_date": "2026-08-27",
+          "final_reason": "exit_signal_full_sell",
+          "n_partial_sells": 3,
+          "partial_sells": [
+            {
+              "date": "2026-08-19",
+              "reason": "first_breach_half_sell",
+              "fraction_sold": 0.5,
+              "price": 17.0
+            },
+            {
+              "date": "2026-08-24",
+              "reason": "first_breach_half_sell",
+              "fraction_sold": 0.25,
+              "price": 16.37
+            },
+            {
+              "date": "2026-08-27",
+              "reason": "exit_signal_full_sell",
+              "fraction_sold": 0.25,
+              "price": 16.44
+            }
+          ],
+          "weighted_avg_sell_price": 16.7025,
+          "return_pct": 0.010436,
+          "holding_days": 15,
+          "stop_loss_ever_triggered": true,
+          "ended_via_exit_signal": true,
+          "ended_via_stop_loss_confirm": false
+        },
+        {
+          "symbol": "VRTX",
+          "entry_date": "2025-09-09",
+          "entry_price": 396.48,
+          "final_exit_date": "2025-09-11",
+          "final_reason": "confirm_second_half_sell",
+          "n_partial_sells": 2,
+          "partial_sells": [
+            {
+              "date": "2025-09-10",
+              "reason": "first_breach_half_sell",
+              "fraction_sold": 0.5,
+              "price": 388.55
+            },
+            {
+              "date": "2025-09-11",
+              "reason": "confirm_second_half_sell",
+              "fraction_sold": 0.5,
+              "price": 397.37
+            }
+          ],
+          "weighted_avg_sell_price": 392.96,
+          "return_pct": -0.008878,
+          "holding_days": 2,
+          "stop_loss_ever_triggered": true,
+          "ended_via_exit_signal": false,
+          "ended_via_stop_loss_confirm": true
+        },
+        {
+          "symbol": "ORCL",
+          "entry_date": "2026-01-12",
+          "entry_price": 203.2605,
+          "final_exit_date": "2026-01-14",
+          "final_reason": "confirm_second_half_sell",
+          "n_partial_sells": 2,
+          "partial_sells": [
+            {
+              "date": "2026-01-13",
+              "reason": "first_breach_half_sell",
+              "fraction_sold": 0.5,
+              "price": 200.8871
+            },
+            {
+              "date": "2026-01-14",
+              "reason": "confirm_second_half_sell",
+              "fraction_sold": 0.5,
+              "price": 192.2673
+            }
+          ],
+          "weighted_avg_sell_price": 196.5772,
+          "return_pct": -0.03288,
+          "holding_days": 2,
+          "stop_loss_ever_triggered": true,
+          "ended_via_exit_signal": false,
+          "ended_via_stop_loss_confirm": true
+        },
+        {
+          "symbol": "TEAM",
+          "entry_date": "2026-05-01",
+          "entry_price": 88.88,
+          "final_exit_date": "2026-05-05",
+          "final_reason": "confirm_second_half_sell",
+          "n_partial_sells": 2,
+          "partial_sells": [
+            {
+              "date": "2026-05-04",
+              "reason": "first_breach_half_sell",
+              "fraction_sold": 0.5,
+              "price": 93.16
+            },
+            {
+              "date": "2026-05-05",
+              "reason": "confirm_second_half_sell",
+              "fraction_sold": 0.5,
+              "price": 92.35
+            }
+          ],
+          "weighted_avg_sell_price": 92.755,
+          "return_pct": 0.043598,
+          "holding_days": 2,
+          "stop_loss_ever_triggered": true,
+          "ended_via_exit_signal": false,
+          "ended_via_stop_loss_confirm": true
+        },
+        {
+          "symbol": "NET",
+          "entry_date": "2025-12-10",
+          "entry_price": 213.46,
+          "final_exit_date": "2026-01-08",
+          "final_reason": "exit_signal_full_sell",
+          "n_partial_sells": 4,
+          "partial_sells": [
+            {
+              "date": "2025-12-15",
+              "reason": "first_breach_half_sell",
+              "fraction_sold": 0.5,
+              "price": 196.7
+            },
+            {
+              "date": "2025-12-17",
+              "reason": "first_breach_half_sell",
+              "fraction_sold": 0.25,
+              "price": 191.43
+            },
+            {
+              "date": "2025-12-31",
+              "reason": "first_breach_half_sell",
+              "fraction_sold": 0.125,
+              "price": 197.15
+            },
+            {
+              "date": "2026-01-08",
+              "reason": "exit_signal_full_sell",
+              "fraction_sold": 0.125,
+              "price": 186.96
+            }
+          ],
+          "weighted_avg_sell_price": 194.2212,
+          "return_pct": -0.090128,
+          "holding_days": 19,
+          "stop_loss_ever_triggered": true,
+          "ended_via_exit_signal": true,
+          "ended_via_stop_loss_confirm": false
+        },
+        {
+          "symbol": "VRSN",
+          "entry_date": "2026-01-28",
+          "entry_price": 251.1532,
+          "final_exit_date": "2026-02-04",
+          "final_reason": "exit_signal_full_sell",
+          "n_partial_sells": 2,
+          "partial_sells": [
+            {
+              "date": "2026-01-29",
+              "reason": "first_breach_half_sell",
+              "fraction_sold": 0.5,
+              "price": 241.9492
+            },
+            {
+              "date": "2026-02-04",
+              "reason": "exit_signal_full_sell",
+              "fraction_sold": 0.5,
+              "price": 238.7392
+            }
+          ],
+          "weighted_avg_sell_price": 240.3442,
+          "return_pct": -0.043037,
+          "holding_days": 5,
+          "stop_loss_ever_triggered": true,
+          "ended_via_exit_signal": true,
+          "ended_via_stop_loss_confirm": false
+        },
+        {
+          "symbol": "IBKR",
+          "entry_date": "2025-11-05",
+          "entry_price": 71.3183,
+          "final_exit_date": "2025-11-18",
+          "final_reason": "exit_signal_full_sell",
+          "n_partial_sells": 1,
+          "partial_sells": [
+            {
+              "date": "2025-11-18",
+              "reason": "exit_signal_full_sell",
+              "fraction_sold": 1.0,
+              "price": 63.0034
+            }
+          ],
+          "weighted_avg_sell_price": 63.0034,
+          "return_pct": -0.116588,
+          "holding_days": 9,
+          "stop_loss_ever_triggered": false,
+          "ended_via_exit_signal": true,
+          "ended_via_stop_loss_confirm": false
+        },
+        {
+          "symbol": "USB",
+          "entry_date": "2025-11-25",
+          "entry_price": 47.5398,
+          "final_exit_date": "2026-02-24",
+          "final_reason": "exit_signal_full_sell",
+          "n_partial_sells": 1,
+          "partial_sells": [
+            {
+              "date": "2026-02-24",
+              "reason": "exit_signal_full_sell",
+              "fraction_sold": 1.0,
+              "price": 54.0054
+            }
+          ],
+          "weighted_avg_sell_price": 54.0054,
+          "return_pct": 0.136005,
+          "holding_days": 60,
+          "stop_loss_ever_triggered": false,
+          "ended_via_exit_signal": true,
+          "ended_via_stop_loss_confirm": false
+        }
+      ],
+      "result": "14/14全部通过(entry 2笔+breach/confirm组合8笔+exit 4笔)，包括一个值得记录的真实细节：VRTX/ORCL/TEAM三笔交易的confirm都发生在first_breach次日(仅隔1个交易日)——这看起来像bug但独立验证后确认是正确行为：price_stop_loss_triggered的5天确认窗口看的是'该天为止最近5个交易日的原始收盘价'，不是'从watching状态开始算的5天'，如果entry时价格已经在一段延续多日的弱势行情里(呼应此前诊断的'51%的entry买入时已跌破支撑位')，first_breach发生后1-2天就可能凑满'最近5日全部低于阈值'的条件，跟这套分级退出机制的设计初衷(给价格一个观察窗口)有一定张力——多数情况下'观察窗口'其实很短，不是完整的5个交易日缓冲。"
+    },
+    "finding": "分级退出在整体组合层面基本是打平的：总体胜率40.91%→41.46%(几乎持平)，PF 1.8758→1.8657(几乎持平，噪声级别变化)，总交易数1117→1071(减少46笔，因为部分止损段交易和后续行情合并成了一笔跨越更长时间的交易)。拆开看止损相关部分：机制确实提供了小幅、真实的平滑效果——那411笔真正走到'5天确认后清仓剩余仓位'的交易，用分批卖出的加权均价比单笔在同一天全部卖出，均值收益率改善0.3个百分点、53%的情况下更优，但改善后这个细分段仍然是亏钱的(均值-0.86%，胜率41.12%，PF仅0.52)——没有被治好，只是没那么疼。而这个小改善的代价，来自131笔'提前卖了一半但价格后来又收复'的交易：均值上因为提前卖出而损失3.58个百分点(但中位数其实基本持平甚至略优，代价分布高度右偏，由少数暴力反弹的极端案例主导)。两头相抵，portfolio整体层面几乎看不出净变化。",
+    "verdict": "介于'有用'和'没用'之间，更接近'没用'：机制设计本身有一定道理(分批建仓/建出是常见的风险管理手法)，止损确认段确实有真实但很小的平均收益率改善，但这个改善被'噪音性单日破位提前减仓'的代价基本抵消，整体组合层面胜率/盈亏比没有实质变化。没有解决止损段本身仍然是净亏损段这个核心问题。"
+  },
+  "overall_recommendation": "三个思路都测过了，没有一个真正解决price_stop_loss段系统性亏钱的问题，如实排序：\n1) 任务一(大盘系统性风险过滤)：诊断阶段确认了一个真实、统计显著但幅度有限的新发现——price_stop_loss段买入时大盘处于systemic_risk状态的比例(15.46%)确实高于exit_signal段(10.63%)，这是此前从未测过的市场整体维度，值得记录，但过滤测试证明这个信息量不足以支撑一条有效的live规则(过滤后psl段胜率38.09%→38.01%，几乎无变化)。\n2) 任务二(double_bottom+支撑位缓冲)：不是新发现，是entry_buffer_sweep.json'支撑位缓冲只降低止损频率、不改善触发后质量'这一结论在双重底信号上的重复验证——效果模式完全一致(psl段从315笔砍到7笔，这7笔0%胜率)，进一步巩固了'支撑位缓冲不是解药'的结论，但也不是坏结果，只是没有新增信息。\n3) 任务三(分级退出)：三者中唯一在'止损确认段本身'测出真实、方向正确的小幅改善(53%案例更优，均值+0.3个百分点)，但改善幅度小到几乎被'提前卖出的代价'抵消，portfolio整体层面没有可感知的净变化，且该细分段改善后仍然是净亏损(-0.86%均值收益率)。\n综合结论：没有一个思路值得现在就写进live规则。如果一定要排序，任务三的分级退出机制方向上最有潜力(唯一让止损段本身而非交易频率变好的思路)，但需要更大样本、更长窗口验证'代价是否真的是噪音'还是会持续存在；任务一的市场状态发现值得记录归档，作为'entry信号买入时机'诊断维度的补充，但不构成独立可执行规则；任务二没有提供超出已知结论的新信息。核心结论保持不变：price_stop_loss段系统性亏钱的根源，是entry类信号(日线级别的短期指标对齐，不论是MA/MACD/RSI共振还是double_bottom结构反转)本身不检查价格所处的长周期(周线/月线)位置——本轮三个全新角度(市场状态/支撑位缓冲组合/退出机制分级化)都没有从'止损段之外'或'退出机制本身'找到真正的解法，这进一步佐证问题出在entry这一端，而不是exit这一端能单独修复的。",
+  "_build_stats": {
+    "elapsed_seconds_by_script": {
+      "spx_regime_fetch_and_classify": "~2s(^GSPC单只标的，首次网络拉取)",
+      "task1_diagnosis_regime_lookup_on_1139_existing_trades": "~3s",
+      "task1_rerun_186symbols_1yr_unfiltered_and_gated_first_run_cold_cache": "37.2s(含186只标的首次网络下载indicator所需OHLCV)",
+      "task1_rerun_186symbols_1yr_after_bugfix_warm_cache": "11.6s(unfiltered 5.8s + gated 5.8s，磁盘缓存读取)",
+      "task2_double_bottom_5yr_baseline_and_filtered_warm_cache": "11.5s(baseline 5.7s + filtered 5.8s)",
+      "task3_staged_exit_186symbols_1yr_warm_cache": "5.7s",
+      "verification_spot_checks_task1_task2_task3_combined": "~10s(约30次point-function独立调用)"
+    },
+    "total_elapsed_seconds_approx": 90,
+    "note": "以上是纯计算脚本的实际elapsed；不含人工设计/调试耗时。过程中发现并修复了一个真实bug：第一版向量化周线支撑位计算(merge_asof backward)遗漏了'当前尚未走完的这一周'的部分数据，导致price_stop_loss_triggered在部分历史不足5年的早期日期上误判(用check_trend_gate()点位函数抽查8笔发现4笔不一致后定位)，修复后186只标的的完整重跑总耗时约90秒(含一次冷启动的网络下载)。这次调试+重验证过程本身占用了本次任务的大部分实际时间，是保证三个任务最终数字可信的必要成本，不是被压缩掉的步骤。"
+  }
+}

@@ -1,0 +1,141 @@
+{
+  "built_date": "2026-09-09",
+  "purpose": "对strategy_backtest_zeiierman_ranked_zones_and_range_osc.json里两个候选机制(Order Block止损公式、Range Oscillator avoid_chase入场过滤)做组合级(portfolio-level)补测，检验per-symbol独立回测的正面结果能否在186只股票共享资金池/execution_pacing/max_concurrent_positions的真实账户约束下保留，从而判断是否可以考虑写入risk_rules.json。方法论完全复用strategy_backtest_adx_portfolio_level_pacing_test.json的组合级模拟引擎（该测试的核心教训是：ADX的per-symbol正面结果在组合级约束下发生反转，per-symbol结果不能预测组合级结果，必须真的跑），不新发明规则；本次额外发现的是一种教训未曾覆盖过的新模式——见key_finding。",
+
+  "universe": {
+    "n_symbols": 186,
+    "source": "strategy_backtest_entry_exit.json的industries.*.trades[].symbol程序化去重提取，与ADX/摆动支撑位两轮组合级测试同一套186只股票",
+    "window": "2025-09-08 ~ 2026-09-08，252个交易日（与ADX/摆动支撑位两轮组合级测试逐日相同）"
+  },
+
+  "data_snapshot": "复用swingcap_zv轮次(strategy_backtest_swing_pivot_shortcap_outlierfilter_portfolio.json / strategy_backtest_zeiierman_ranked_zones_and_range_osc.json)已冻结的frozen_ohlcv.pkl快照（186只股票，CURR_DATE=2026-09-09，全部覆盖到最后交易日2026-09-08），通过core_zv.load_symbol_frame()读取——这正是本次要对比的两个候选机制per-symbol结果所使用的同一份快照，保证组合级数字与per-symbol数字在同一份底层数据上可比。本次三组模拟（baseline/order_block/range_osc_avoid_chase）由同一个Python进程一次性构建全部186只股票的信号+支撑位+振荡器列（build_frames.py），三组共享同一份frames字典和同一个calendar，不存在组内或组间数据不一致的风险。",
+
+  "risk_rules_params_used": {
+    "source": "程序化从risk_rules.json读取，不手抄",
+    "account.starting_capital_usd": 2192.82,
+    "execution_pacing.max_new_positions_per_day": 3,
+    "account.max_concurrent_positions": 10,
+    "position_sizing_by_conviction.medium": 0.12,
+    "trend_gate.price_stop_loss_pct_below_support": 0.03,
+    "trend_gate.price_stop_loss_confirm_days": 5,
+    "trend_gate.weekly_support_lookback_weeks": 26,
+    "trend_gate.weekly_support_ma_period_weeks": 30
+  },
+
+  "methodology_note": "组合级模拟引擎从scratchpad/portfolio_sim.py(ADX轮)近乎逐行搬运，只加了两个通用化开关：stop_trig_col（选用哪一列的price_stop_loss布尔触发结果）和entry_filter_col（可选的entry_rise额外过滤列），其余逻辑完全不变：(1) EXIT优先于ENTRY处理（同一天卖出释放的现金/持仓额度当天就能被后续候选使用）；(2) 每天ENTRY候选池=昨天结转的deferred队列+今天新触发的候选，按symbol字母序排序（本次同样没有Phase A的conviction/technical_signals/calibration_context数据，排队规则a/b/c全部打平，完全退化为纯字母序——这是必须显式声明的简化，不是偷懒，跟ADX/摆动支撑位两轮完全一致）；(3) 每天在处理完当天所有EXIT之后、开始处理ENTRY队列之前，对现金+持仓市值算一次equity快照，size=12%×equity，当天所有新开仓候选统一用这个size（全部entry统一按medium档处理，同样是必须声明的简化，全文只测这一档）；(4) 现金可用性闸门（cash_shortfall）——'共享资金池'这个要求本身隐含的约束，不是额外发明；(5) 未成交候选按daily_cap>concurrent_cap>cash_shortfall顺序判定defer原因，保留在队列里第二天连同新触发候选重新排队，不重新验证信号是否仍然有效；一旦排到并成交，成交价用实际成交当天收盘价。\n\n三组的具体改动点（严格按用户任务书的操作化定义，原样沿用strategy_backtest_zeiierman_ranked_zones_and_range_osc.json里已验证过的公式，不做任何调整）：\n- baseline：entry_rise=六线rising edge（MA5>10>20且close>5sma+MACD多头+RSI6>12>24且RSI6>50，全部同时从False变True），止损=现有支撑位（max(最近26周收盘最低点,30周均线)）×97%，最近5个交易日收盘价连续低于该阈值才触发。stop_trig_col=baseline_support_triggered，无entry_filter。\n- order_block：entry_rise不变；止损换成support_level=max(OB_zone_price(k=1.5，6因子等权重，'nogate'设计——不要求区域必须在当前价格下方，只取quality_score最高的单一候选，与baseline_support取max()), baseline_support)，其余不变（97%阈值、5天冻结确认）。stop_trig_col=ob_support_nogate_triggered，无entry_filter。用户明确要求原样沿用'nogate'设计的机制性特征：OB候选价格可能高于当前股价（本次1年窗口内实测43.65%的symbol-day如此，见per-symbol报告），本次未做任何改动。\n- range_osc_avoid_chase：止损不变（=baseline的现有支撑位公式）；entry_rise触发当天额外要求Range Oscillator(N=14, mult=2.0，仿Keltner通道构造：中轴=EMA(14)，半宽=ATR(14,Wilder)×2.0，振荡器=100×(close-中轴)/半宽)<+50才放行买入，未通过的触发day在候选生成阶段就被拦下（entry_blocked_by_filter计数，不进入队列，不算deferred——因为它连候选资格都没有获得，这一点跟daily_cap/cash_shortfall式的deferred有本质区别，见下方'range_osc特有机制'）。stop_trig_col=baseline_support_triggered，entry_filter_col=range_osc_filter_pass。\n\n【range_osc特有机制，必须显式声明】被过滤掉的entry_rise触发不会让该symbol进入'pending'状态（不像daily_cap/cash_shortfall式deferred会让symbol在deferred队列里占位、从而阻止同一symbol的后续新触发被重复计数）——这意味着如果同一个symbol的六线信号后续再次从False翻转到True（一次全新的rising edge，不是同一次信号的延续），会被再次计为一次新的entry_trigger并重新接受过滤检查。这是range_osc_filter_pass这个'逐日重新判定'设计的必然结果，不是bug，但导致这一组的entry_triggers_total_ungated_by_pending(828)远高于baseline/order_block(264/291)——三组这个字段的分母定义不完全等价，比较entry_allowed占比时需要注意这一点，本报告不用这个总量口径做三组间的直接除法对比，而是用'baseline实际发生的87笔真实交易里,有多少笔的首次触发day会被range_osc过滤掉'这个更干净、更贴近用户问题的口径（见key_finding第3点）。",
+
+  "baseline_result": {
+    "total_trades": 87,
+    "overall": {"n": 87, "wins": 31, "losses": 56, "win_rate": 0.3563, "profit_factor_pct_based": 2.4141, "profit_factor_dollar_based": 2.1747, "avg_return_pct": 0.050523, "median_return_pct": -0.00715, "avg_holding_days_calendar": 26.1},
+    "price_stop_loss_segment": {"n": 26, "wins": 7, "losses": 19, "win_rate": 0.2692, "profit_factor_pct_based": 0.2157, "profit_factor_dollar_based": 0.1746, "avg_return_pct": -0.014679, "median_return_pct": -0.004464, "avg_holding_days_calendar": 2.38},
+    "exit_signal_segment": {"n": 61, "wins": 24, "losses": 37, "win_rate": 0.3934, "profit_factor_pct_based": 2.8223, "profit_factor_dollar_based": 2.6607, "avg_return_pct": 0.078314, "median_return_pct": -0.02975, "avg_holding_days_calendar": 36.21},
+    "final_cash": 79.8, "final_positions_mtm_value": 4004.65, "final_equity": 4084.45, "total_return_pct": 0.8626,
+    "open_positions_at_window_end_count": 7,
+    "capital_utilization": {"pct_trading_days_zero_open_positions": 0.0, "avg_cash_fraction_of_equity": 0.0734, "median_cash_fraction_of_equity": 0.0788, "avg_concurrent_positions": 6.921, "median_concurrent_positions": 7.0, "max_concurrent_positions_ever_reached": 8, "cap_from_risk_rules": 10},
+    "deferred_queue": {"total_distinct_candidates_created": 264, "ever_deferred_at_least_once": 243, "never_deferred_filled_immediately": 21, "by_first_defer_reason": {"daily_cap": 32, "concurrent_cap": 0, "cash_shortfall": 211}, "eventually_filled": 94, "never_filled_by_window_end": 170, "effectively_missed_gt_30_trading_days": 191, "deferred_candidates_trading_days_waited_avg": 163.67, "deferred_candidates_trading_days_waited_median": 220.0, "deferred_candidates_trading_days_waited_max": 251, "candidate_days_blocked_by_reason_across_full_year": {"daily_cap": 64, "concurrent_cap": 0, "cash_shortfall": 39878}},
+    "note": "与strategy_backtest_swing_pivot_shortcap_outlierfilter_portfolio.json task_c_portfolio_level_simulation里独立重跑的baseline（n=87/psl win 26.92%/PF 0.2157/total_return 86.26%）几乎逐位相同——两次独立构建（一次读us-stock-data实时缓存、一次读本次的frozen_ohlcv.pkl快照）得到几乎相同的数字，是对本次引擎正确性的一次额外交叉验证。"
+  },
+
+  "order_block_result": {
+    "total_trades": 119,
+    "overall": {"n": 119, "wins": 45, "losses": 74, "win_rate": 0.3782, "profit_factor_pct_based": 1.6342, "profit_factor_dollar_based": 1.4571, "avg_return_pct": 0.021255, "median_return_pct": -0.009972, "avg_holding_days_calendar": 19.92},
+    "price_stop_loss_segment": {"n": 49, "wins": 20, "losses": 29, "win_rate": 0.4082, "profit_factor_pct_based": 0.3378, "profit_factor_dollar_based": 0.3279, "avg_return_pct": -0.01296, "median_return_pct": -0.004499, "avg_holding_days_calendar": 2.41},
+    "exit_signal_segment": {"n": 70, "wins": 25, "losses": 45, "win_rate": 0.3571, "profit_factor_pct_based": 2.0446, "profit_factor_dollar_based": 1.8652, "avg_return_pct": 0.045206, "median_return_pct": -0.031655, "avg_holding_days_calendar": 32.17},
+    "final_cash": 31.52, "final_positions_mtm_value": 3226.04, "final_equity": 3257.56, "total_return_pct": 0.4856,
+    "open_positions_at_window_end_count": 7,
+    "capital_utilization": {"pct_trading_days_zero_open_positions": 0.0, "avg_cash_fraction_of_equity": 0.0681, "median_cash_fraction_of_equity": 0.0734, "avg_concurrent_positions": 7.02, "median_concurrent_positions": 7.0, "max_concurrent_positions_ever_reached": 8, "cap_from_risk_rules": 10},
+    "deferred_queue": {"total_distinct_candidates_created": 291, "ever_deferred_at_least_once": 263, "never_deferred_filled_immediately": 28, "by_first_defer_reason": {"daily_cap": 32, "concurrent_cap": 0, "cash_shortfall": 231}, "eventually_filled": 126, "never_filled_by_window_end": 165, "effectively_missed_gt_30_trading_days": 183, "deferred_candidates_trading_days_waited_avg": 149.94, "deferred_candidates_trading_days_waited_median": 213.0, "deferred_candidates_trading_days_waited_max": 251, "candidate_days_blocked_by_reason_across_full_year": {"daily_cap": 562, "concurrent_cap": 0, "cash_shortfall": 39038}},
+    "genuine_zone_usage_in_portfolio_psl_trades": {"n_psl": 49, "genuine_ob_above_baseline": 32, "pct": 0.653, "note": "逐笔核查49笔止损段交易在触发当天的ob_support_nogate是否真的高于baseline_support（不是回退）——65.3%是真实OB区域在起作用，比per-symbol报告的60.6%略高，方向一致，不是巧合的样本塌缩。"}
+  },
+
+  "range_osc_avoid_chase_result": {
+    "total_trades": 106,
+    "overall": {"n": 106, "wins": 43, "losses": 63, "win_rate": 0.4057, "profit_factor_pct_based": 1.5216, "profit_factor_dollar_based": 1.335, "avg_return_pct": 0.020483, "median_return_pct": -0.009359, "avg_holding_days_calendar": 21.55},
+    "price_stop_loss_segment": {"n": 41, "wins": 22, "losses": 19, "win_rate": 0.5366, "profit_factor_pct_based": 0.7115, "profit_factor_dollar_based": 0.6524, "avg_return_pct": -0.003567, "median_return_pct": 0.001923, "avg_holding_days_calendar": 1.54},
+    "exit_signal_segment": {"n": 65, "wins": 21, "losses": 44, "win_rate": 0.3231, "profit_factor_pct_based": 1.6339, "profit_factor_dollar_based": 1.4416, "avg_return_pct": 0.035654, "median_return_pct": -0.03038, "avg_holding_days_calendar": 34.17},
+    "final_cash": 369.4, "final_positions_mtm_value": 2983.44, "final_equity": 3352.83, "total_return_pct": 0.529,
+    "open_positions_at_window_end_count": 6,
+    "capital_utilization": {"pct_trading_days_zero_open_positions": 0.0, "avg_cash_fraction_of_equity": 0.0707, "median_cash_fraction_of_equity": 0.0807, "avg_concurrent_positions": 6.77, "median_concurrent_positions": 7.0, "max_concurrent_positions_ever_reached": 8, "cap_from_risk_rules": 10},
+    "deferred_queue": {"total_distinct_candidates_created": 262, "ever_deferred_at_least_once": 234, "never_deferred_filled_immediately": 28, "by_first_defer_reason": {"daily_cap": 4, "concurrent_cap": 0, "cash_shortfall": 230}, "eventually_filled": 112, "never_filled_by_window_end": 150, "effectively_missed_gt_30_trading_days": 171, "deferred_candidates_trading_days_waited_avg": 129.62, "deferred_candidates_trading_days_waited_median": 167.0, "deferred_candidates_trading_days_waited_max": 251, "candidate_days_blocked_by_reason_across_full_year": {"daily_cap": 9, "concurrent_cap": 0, "cash_shortfall": 30472}},
+    "entry_filter_stats": {
+      "entry_triggers_total_ungated_by_pending": 828, "entry_blocked_by_filter": 566, "entry_allowed_as_candidate": 262,
+      "note": "此口径下allowed占比31.6%，比per-symbol报告的38.6%(N14/m2.0)更低——原因见methodology_note的'range_osc特有机制'说明：portfolio级下被过滤的候选不会像daily_cap/cash_shortfall那样占用pending状态，导致同一symbol的后续重新触发被反复计入分子分母，两个口径的entry_triggers定义不完全等价，不能直接横向比较绝对值，只能看趋势方向（过滤比例仍然很高）。"
+    },
+    "missed_opportunity_analysis": {
+      "method": "以baseline组合级模拟实际发生的87笔真实交易为基准，检查每一笔交易的首次触发日(first_trigger_date)当天该symbol的Range Oscillator值是否>=50——若是，说明这笔交易如果用range_osc_avoid_chase规则跑，从一开始就不会成为候选（在entry过滤阶段就被拦下，不会进入排队），是最贴近用户问题'本来会盈利的候选因为被过滤而错过'的干净口径。",
+      "would_be_blocked_trades": {"n": 49, "pct_of_baseline_trades": 0.563, "wins": 21, "losses": 28, "total_dollar_pnl": 1012.0, "pct_of_baseline_total_pnl": 0.813},
+      "would_be_allowed_trades": {"n": 38, "wins": 10, "losses": 28, "total_dollar_pnl": 232.7},
+      "top_blocked_would_be_winners": [
+        {"symbol": "AMD", "first_trigger_date": "2026-03-25", "entry_date": "2026-03-31", "exit_date": "2026-07-17", "dollar_pnl": 473.13, "return_pct": 1.437, "osc_at_trigger": 86.45},
+        {"symbol": "ALAB", "first_trigger_date": "2026-04-13", "entry_date": "2026-05-01", "exit_date": "2026-07-15", "dollar_pnl": 277.12, "return_pct": 0.7299, "osc_at_trigger": 181.04},
+        {"symbol": "ALB", "first_trigger_date": "2025-09-25", "entry_date": "2025-10-02", "exit_date": "2026-02-06", "dollar_pnl": 233.12, "return_pct": 0.8704, "osc_at_trigger": 51.4},
+        {"symbol": "BTSG", "first_trigger_date": "2025-11-25", "entry_date": "2026-03-18", "exit_date": "2026-08-03", "dollar_pnl": 137.89, "return_pct": 0.4039, "osc_at_trigger": 102.87},
+        {"symbol": "ALKS", "first_trigger_date": "2026-05-05", "entry_date": "2026-05-21", "exit_date": "2026-07-29", "dollar_pnl": 128.39, "return_pct": 0.3083, "osc_at_trigger": 93.95}
+      ],
+      "amd_deep_dive_confirmed_fully_missed": {
+        "description": "AMD是本次窗口baseline最大的单笔realized winner(+$473.13, +143.7%)，独立核查确认range_osc组合从2026-03-25起对AMD的每一次entry_rise触发，Range Oscillator值都>=50（未曾在窗口剩余时间内跌回50以下），也就是说这整段~700%涨幅期间AMD从未再获得过一次合格的入场机会——不是'排队排不上'（组合级资金/节奏约束），是过滤本身在信号层面就彻底锁死了这笔交易，range_osc组的AMD实际trade_log里只留下两笔更早、更小的交易(entry 2025-10-14/2026-02-10，合计dollar_pnl=$39.17-$13.07=$26.10)，完整错过了后续的主升浪。",
+        "verified_osc_values_independent_recompute": [
+          {"date": "2026-03-25", "pipeline": 86.4534, "hand_recompute": 86.4534, "match": true},
+          {"date": "2026-04-06", "pipeline": 60.757, "hand_recompute": 60.757, "match": true},
+          {"date": "2026-06-02", "pipeline": 90.2193, "hand_recompute": 90.2193, "match": true}
+        ]
+      },
+      "fully_missed_symbols_never_entered_at_all": {
+        "symbols": ["CRCT", "CRWV"],
+        "note": "这是更严格的口径（整只股票range_osc组合级模拟里从未成交过一次，不只是错过某一段特定的行情）：只有2只符合，baseline在这两只股票上的realized+unrealized合计仅+$8.8（CRWV +$14.0，CRCT -$5.2），金额很小——说明'entry filter导致的机会成本'主要不体现在'整只股票被完全放弃'，而是像AMD那样体现在'同一symbol的某一段特定的最赚钱行情被精准过滤掉，账户改为在更晚/更差的价位重新进场，或完全没有第二次机会'，这是本报告最重要的定量发现之一，见key_finding。"
+      }
+    }
+  },
+
+  "comparison_table": [
+    {"variant": "baseline", "total_trades": 87, "psl_n": 26, "psl_win_rate": 0.2692, "psl_pf_pct": 0.2157, "overall_win_rate": 0.3563, "total_return_pct": 0.8626, "avg_concurrent_positions": 6.921, "avg_cash_fraction": 0.0734},
+    {"variant": "order_block(k1.5,equal,nogate,替换止损公式)", "total_trades": 119, "psl_n": 49, "psl_win_rate": 0.4082, "psl_pf_pct": 0.3378, "overall_win_rate": 0.3782, "total_return_pct": 0.4856, "avg_concurrent_positions": 7.02, "avg_cash_fraction": 0.0681, "psl_direction_vs_baseline": "改善（26.92%→40.82%，+13.9pp；PF 0.2157→0.3378，+0.156），方向与per-symbol结果(37.95%→41.34%)一致，未反转，但总收益率反而下降"},
+    {"variant": "range_osc_avoid_chase(N14/m2.0<50，entry前置过滤)", "total_trades": 106, "psl_n": 41, "psl_win_rate": 0.5366, "psl_pf_pct": 0.7115, "overall_win_rate": 0.4057, "total_return_pct": 0.529, "avg_concurrent_positions": 6.77, "avg_cash_fraction": 0.0707, "psl_direction_vs_baseline": "大幅改善（26.92%→53.66%，+26.7pp；PF 0.2157→0.7115，+0.496），方向与per-symbol结果(37.95%→38.96%)一致且幅度远超per-symbol，但总收益率同样下降，且独立定位到具体机制（见key_finding）"}
+  ],
+
+  "verification": {
+    "queue_timeline_hand_checks": {
+      "method": "对三组各抽3-5个真实的'因组合级约束而顺延'案例，用frames重建当日候选池、手工核对字母序排序/是否插队/是否重复计数，方法与strategy_backtest_adx_portfolio_level_pacing_test.json的verification一致。",
+      "baseline_samples": [
+        {"symbol": "CRM", "case": "daily_cap顺延1天后成交", "timeline": "2025-09-08(第1个交易日)当天entry_rise触发候选池(字母序)=[AXTA,BTSG,CRCT,CRM,ESI,HTFL,INSM,ONDS,PNFP,SHW,WAY,WLK,YELP]共13个，与ADX轮verification记录的day1候选池完全一致(交叉验证本次entry信号生成无偏差)。daily_cap=3，字母序前3(AXTA,BTSG,CRCT)成交，CRM排第4被deferred(daily_cap)。2025-09-09候选池=[CRM结转]+16个新触发，字母序前3(ALAB,CDNS,CRM)，CRM当天成交(trade_log记录entry_date=2025-09-09)。", "verified": "waited=1个交易日，与candidate_lifecycle记录逐位一致，未发现重复计数或插队。"},
+        {"symbol": "ESI", "case": "day1即被daily_cap挡下，此后全年从未成交", "timeline": "2025-09-08触发，字母序排在第5位(AXTA/BTSG/CRCT/CRM之后)，daily_cap当天只放行前3，ESI被deferred；此后251个交易日反复重新排队，均被cash_shortfall挡下(账户现金规模只能承载约7个12%并发仓位)，窗口结束仍未成交。", "verified": "candidate_lifecycle: status=pending/filled_date=null/trading_days_waited=251/effectively_missed_gt_30td=true，全年未出现在trade_log(未被重复/错误成交)，与ADX轮SHW案例的模式完全一致。"},
+        {"symbol": "AMRX", "case": "cash_shortfall顺延38个交易日后成交", "timeline": "2025-09-11首次触发，此后连续38个交易日反复排队均因现金不足被deferred，直到2025-11-04现金腾出才成交。", "verified": "trade_log entry_date=2025-11-04，candidate_lifecycle trading_days_waited=38，前后一致，账户历史现金水位(daily_stats)在此期间持续低于required_dollar，核实无误。"}
+      ],
+      "order_block_samples": [
+        {"symbol": "CRM", "case": "早期入场路径与baseline完全相同（止损公式此时尚未产生分歧）", "timeline": "与baseline同一天(2025-09-08)触发同一候选池，同样daily_cap顺延1天，2025-09-09成交，与baseline逐笔相同——证实止损公式替换不影响entry_rise信号生成本身，只在后续持仓期间才可能产生分叉。"},
+        {"symbol": "AMD", "case": "止损公式差异经由资金路径引发的入场时点漂移（'蝴蝶效应'式顺延，与摆动支撑位轮ADBE案例同一类型）", "timeline": "AMD第3个交易episode：baseline于2026-03-25首次触发，因cash_shortfall等待4个交易日，2026-03-31成交(entry_price=$203.43)，一路持有到2026-07-17被exit_signal平仓(+$473.13,+143.7%)。order_block组同一2026-03-25触发因cash_shortfall等待1天，2026-03-26以更低价成交($203.77，此时两组现金路径尚未产生太大差异)，但order_block的OB支撑位($208左右)比baseline的支撑位更高/更紧，导致这笔仓位仅持有6天就于2026-04-01被price_stop_loss提前平仓(小赚+$10.55)；这笔提前止损释放的现金被queue里其他候选占用，AMD的下一次触发(2026-04-06)因cash_shortfall被反复顺延达15个交易日，直到2026-04-27才成交，此时价格已从$203附近涨到$334.63——错过了行情最陡峭的前段，最终同样于2026-07-17被exit_signal平仓，但只赚了+$152.13(+48.2%)，比baseline少赚$320.99。", "verified": "逐日核对order_block的daily_stats现金序列：2026-03-25 cash=$251.78(不够)，2026-03-26 cash=$225.67(AMD当天成交)，2026-04-01止损平仓后2026-04-06 cash=$306.12(仍不够覆盖新触发所需仓位)，2026-04-24 cash=$317.01(仍不够)，2026-04-27骤降至$1.07(AMD终于成交，几乎耗尽现金)——现金序列与candidate_lifecycle记录的等待轨迹完全吻合，证实这是止损公式差异通过资金路径产生的真实蝴蝶效应，不是bug，也是order_block组total_return低于baseline的一个具体、可追溯的成因案例。"},
+        {"symbol": "ESI", "case": "day1即被daily_cap挡下，此后全年从未成交", "timeline": "与baseline完全相同(止损公式不影响从未成交的候选，因为它根本没有进入持仓状态)。", "verified": "candidate_lifecycle与baseline逐位相同(trading_days_waited=251)。"}
+      ],
+      "range_osc_samples": [
+        {"symbol": "CRM", "case": "过滤后候选池变小，反而免于被daily_cap顺延（与baseline行为不同）", "timeline": "2025-09-08当天，baseline原始候选池13个里有8个(AXTA/BTSG/CRCT/ESI/INSM/ONDS/SHW/WAY)因当天osc>=50被过滤掉，剩余候选池(字母序)=[CRM,HTFL,PNFP,WLK,YELP]仅5个。daily_cap=3，字母序前3(CRM,HTFL,PNFP)当天直接成交——CRM在baseline组是被daily_cap顺延1天才成交的，在range_osc组因为候选池被过滤变小反而当天(2025-09-08)就直接成交，不是巧合，是过滤机制改变了排队构成的直接证据。", "verified": "trade_log记录entry_date=2025-09-08，candidate_lifecycle was_ever_deferred=false，与手工重建的候选池完全一致。"},
+        {"symbol": "WLK/YELP", "case": "day1被daily_cap挡下(排第4/5)，此后全年从未成交", "timeline": "同一天(2025-09-08)候选池里WLK/YELP排第4/5位，daily_cap只放行前3，两者均被deferred(daily_cap)；此后251个交易日反复排队均被cash_shortfall挡下，窗口结束仍未成交。", "verified": "candidate_lifecycle两者trading_days_waited=251/effectively_missed_gt_30td=true，从未出现在trade_log。"},
+        {"symbol": "VRTX", "case": "cash_shortfall/daily_cap顺延1天后成交", "timeline": "2025-09-09首次触发(过滤通过，osc<50)，当天候选池=[DGII,HIMS,TDOC,VRTX,WLK,YELP,ZS](WLK/YELP为day1结转)，字母序前3(DGII,HIMS,TDOC)成交，VRTX排第4被deferred(daily_cap)，2025-09-10成交。", "verified": "trade_log entry_date=2025-09-10, candidate_lifecycle trading_days_waited=1，与手工推算一致。"},
+        {"symbol": "AMD", "case": "被entry过滤彻底拦下（不是排队顺延，是候选资格本身被拒绝）——见missed_opportunity_analysis", "timeline": "2026-03-25触发时osc=86.45(>=50)，直接被entry_blocked_by_filter计数，从未进入候选队列，跟daily_cap/cash_shortfall式的'排队但最终没轮到'有本质区别——AMD这笔交易连'排队'的资格都没有获得。", "verified": "candidate_lifecycle里完全没有对应这次触发的记录(因为被过滤的触发根本不会创建candidate_registry条目)，独立核查frames里该symbol在2026-03-25~窗口结束的全部entry_rise触发日的range_osc_value，确认无一天<50，见amd_deep_dive_confirmed_fully_missed。"}
+      ],
+      "same_day_exit_reentry_check": {
+        "method": "检查186只股票×252天里,是否存在'当天平仓、当天又有新entry_rise候选排上'的边界情况，同ADX轮方法。",
+        "result": {"baseline": [{"symbol": "ADSK", "date": "2026-05-20"}], "order_block": [{"symbol": "ADSK", "date": "2026-05-20"}], "range_osc": [{"symbol": "ADSK", "date": "2026-07-15"}]},
+        "verified": "baseline/order_block的ADSK 2026-05-20案例与ADX轮strategy_backtest_adx_portfolio_level_pacing_test.json verification里记录的同一事件完全一致(跨轮次交叉验证)，核查为EXIT先于ENTRY处理+同日资金复用的正常结果，不是bug；range_osc组因entry过滤改变了ADSK的触发历史，产生了一个不同日期(2026-07-15)但同类型的边界事件，同样核查为正常资金复用，不是重复计数。"
+      }
+    },
+    "order_block_stop_loss_independent_recheck": {
+      "method": "对order_block组止损段49笔实际触发交易随机抽5笔，用与向量化管道完全独立的第二套代码路径(hand_ob_support_nogate，手动Wilder ATR14递推、手动扫描订单块、手动因果确认+仅在eligible子集内百分位数标准化、手动加权打分取argmax、手动与baseline取max())独立复算ob_support_nogate数值，并独立复核止损触发条件(close×(1-3%)阈值+最近5个交易日全部低于阈值)。",
+      "samples": [
+        {"symbol": "ADBE", "exit_date": "2026-05-05", "pipeline_ob_support": 369.06, "hand_ob_support": 369.06, "match": true, "threshold_0.97x": 357.9882, "trailing_5_closes": [243.57, 246.1, 250.71, 253.96, 255.62], "all_5_below_threshold": true},
+        {"symbol": "APD", "exit_date": "2026-01-05", "pipeline_ob_support": 265.0268, "hand_ob_support": 265.0268, "match": true, "threshold_0.97x": 257.076, "trailing_5_closes": [243.0113, 243.9623, 242.1975, 247.3727, 250.701], "all_5_below_threshold": true},
+        {"symbol": "ADBE", "exit_date": "2026-05-21", "pipeline_ob_support": 369.06, "hand_ob_support": 369.06, "match": true, "threshold_0.97x": 357.9882, "trailing_5_closes": [247.6, 255.64, 254.99, 253.37, 244.1], "all_5_below_threshold": true},
+        {"symbol": "ALB", "exit_date": "2026-08-25", "pipeline_ob_support": 189.3666, "hand_ob_support": 189.3666, "match": true, "threshold_0.97x": 183.6856, "trailing_5_closes": [134.28, 134.19, 143.25, 141.51, 133.18], "all_5_below_threshold": true},
+        {"symbol": "AXTA", "exit_date": "2025-12-10", "pipeline_ob_support": 30.4, "hand_ob_support": 30.4, "match": true, "threshold_0.97x": 29.488, "trailing_5_closes": [29.26, 29.08, 28.23, 28.44, 29.2], "all_5_below_threshold": true}
+      ],
+      "result": "5/5完全匹配(误差=0)，5笔触发条件(最近5日收盘全部低于阈值)独立复核全部成立。附带观察：这5笔样本里ob_support_nogate的数值全部远高于trailing 5日收盘价（例如ADBE的支撑位369.06 vs 收盘价仅244-256一线），直观印证per-symbol报告里提到的'nogate设计允许OB候选高于当前价格'这一结构性特征——本次组合级测试的止损段样本里，这不是个例，是常见形态，用户在任务书里要求原样沿用这一设计，本报告未做任何修正。"
+    }
+  },
+
+  "key_finding": "1)【两个机制在price_stop_loss段的per-symbol正面结果，这次都被组合级约束'保留'（不是反转，跟ADX轮不同）】order_block的止损段win_rate从baseline组合级的26.92%(7/26胜)提升到40.82%(20/49胜)，+13.9个百分点，PF从0.2157升到0.3378；range_osc_avoid_chase更明显，从26.92%提升到53.66%(22/41胜)，+26.7个百分点，PF从0.2157升到0.7115。两者的改善方向都跟各自的per-symbol结果(37.95%→41.34%；37.95%→38.96%)一致，且组合级的相对改善幅度（百分点）都不小于per-symbol、甚至更大——如果只看这一个指标，两个机制看起来都'扛住了'组合级约束的考验，比ADX轮的结局好看得多。\n2)【但如实报告一个更重要、更出乎意料的反面发现：两个机制的组合总收益率都明显低于baseline，且不是噪声量级的差距】order_block总收益率48.56%，比baseline的86.26%低37.7个百分点；range_osc_avoid_chase总收益率52.90%，比baseline低33.36个百分点。这是本仓库迄今为止第一次出现'price_stop_loss段指标改善、但总收益率明显更差'这种组合，跟ADX轮'指标本身反转'、摆动支撑位轮'指标和总收益都改善'两种此前见过的模式都不一样，是一种新的失败模式，必须如实记录，不能因为止损段数字好看就回避总收益的下滑。\n3)【order_block总收益下滑的根因：止损触发频率几乎翻倍(26→49笔)，在'nogate'设计下大量止损属于价格远低于支撑位时才触发的正常判定但触发点位本身系统性更高/更早，导致仓位平均持有期缩短（26.1天→19.92天），资金周转更快但让原本能演变成大赢家的仓位被提前砍断——用AMD这个具体案例独立核实：baseline在AMD身上赚了$473.13(+143.7%)，order_block因为一次提前止损打断了原有节奏，资金链条产生连锁反应，AMD的下一次入场被cash_shortfall顺延15个交易日、错过了行情最陡的前段，最终只赚了$152.13(+48.2%)，少赚$321.00——这不是孤立个案，从整体数字上看，order_block组止损段的实现绝对亏损额反而从-$171.0扩大到-$233.0(尽管win_rate/PF看起来更好，因为触发次数几乎翻倍，'更好的单笔质量'被'接近两倍的触发频率'抵消并反超)，同时exit_signal段的总利润从$1415.7大幅缩水到$830.1(70笔里包含更多被'截胡'成exit_signal小赢家、而不是psl的仓位，但整体规模变小)。逐笔核查order_block止损段49笔里65.3%是真实OB区域在起作用(高于per-symbol报告的60.6%，方向一致)，独立复核5笔止损交易的support_level数值和触发条件全部精确匹配(5/5)，排除了这是计算错误的可能——这是机制真实的组合级副作用，不是bug。\n4)【range_osc_avoid_chase总收益下滑的根因，比order_block更明确、更可归因到过滤机制本身】以baseline组合级实际发生的87笔真实交易为基准，检查每笔交易的首次触发日：如果换成range_osc_avoid_chase规则，其中49笔(56.3%)从一开始就会被过滤拦下（触发当天Range Oscillator>=50），而这49笔贡献了baseline全年realized利润的81.3%($1012.0/$1244.8)——即这个'避免追高'的过滤器，恰好精准挡住了本次1年窗口里最赚钱的那一批入场信号（AMD+$473.13/ALAB+$277.12/ALB+$233.12/BTSG+$137.89/ALKS+$128.39位列前五），因为这批入场信号本身就发生在个股已经启动一段明显上涨（osc读数高）之后。独立深挖AMD这个最大单笔案例并做了osc数值的独立复算(3点0.0000误差匹配)：确认从2026-03-25首次触发起，AMD在窗口剩余时间里的每一次entry_rise触发都伴随osc>=50，从未再跌回50以下——这段近700%的主升浪被过滤机制彻底、永久地锁死，不是'排队排不上'（资金/节奏约束），是入场资格在信号层面直接被拒绝，range_osc组在AMD身上只捕获到两笔更早更小的交易(合计+$26.10)。这是用户任务书里明确要求核查的'entry filter是否真的造成了错过好机会'问题的一个肯定、且有独立数值复核支撑的回答：是的，这次确实发生了，而且不是小概率的边缘案例，而是全年最大单笔盈利来源被系统性过滤掉。同时用更严格的口径('整只股票range_osc组合级模拟从未成交过一次')复核，符合条件的只有CRCT/CRWV两只，baseline在这两只上的合计盈亏只有+$8.8——说明这个机制造成的机会成本，主要不是体现为'放弃整只股票'，而是体现为'放弃同一只股票里涨得最凶的那一段'，这是一个更隐蔽、也更难通过'只看entry_allowed占比'这类总量指标发现的机会成本形态。\n5)【资金/节奏瓶颈的结构】三组的candidate_days_blocked_by_reason都是cash_shortfall主导、daily_cap只在窗口最初几天真正起作用，这一点跟ADX/摆动支撑位两轮的既有结论完全一致，未受本次两个新机制影响而改变(daily_cap:cash_shortfall比例，baseline约1:623，order_block约1:69，range_osc约1:3386——三组都是数量级悬殊的cash_shortfall主导)。max_concurrent_positions=10全程未被触及(三组max_concurrent_positions_ever_reached均为8)。资金利用率(现金占比、平均并发持仓数)三组之间差异很小(avg_cash_fraction 0.0734/0.0681/0.0707；avg_concurrent_positions 6.921/7.02/6.77)，说明两个新机制没有在'资金闲置/资金过度占用'这个维度上制造额外的结构性问题，问题出在'具体哪些交易被捕获/错过'这个更细粒度的层面，而不是宏观的资金利用率层面。\n6)【必须强调的局限】(a) 组合级止损段样本量(26/49/41笔)远小于per-symbol独立测试(469/670/308笔)，噪声成分不可忽视，尤其range_osc的+26.7pp改善建立在n=26→41这样薄的样本上；(b) 组合级baseline本身的止损段表现(26.92%)也明显低于per-symbol baseline(37.95%)，两个'baseline'构成不完全可比，这是execution_pacing/现金约束大幅压缩可交易样本的既有结论，不是本次新问题；(c) 排队顺序在缺少Phase A论点数据时完全退化为纯字母序，'谁抢到稀缺名额'带有随机性，这也是三组总收益率差异里无法排除的一个混杂因素，但本次order_block和range_osc的总收益劣势有具体的、可独立核实的因果链条(AMD案例x2)支撑，不完全是字母序噪声能解释的；(d) order_block的nogate设计里OB候选可能高于当前股价这一结构性特征，本次未做任何修改，独立复核的5笔止损交易样本里全部体现了这个特征(支撑位远高于实际收盘价)，如实标注。",
+
+  "recommendation": {
+    "order_block": "不建议现在写入risk_rules.json替换现有止损公式。理由：虽然price_stop_loss段的per-symbol正面结果这次在组合级约束下被保留（win_rate/PF方向都改善，不像ADX轮那样反转），但组合总收益率明显更差(48.56% vs baseline 86.26%，-37.7pp)，且这个劣势有具体、可独立核实的因果机制支撑（止损触发频率几乎翻倍导致更频繁的资金周转，通过AMD案例证实这种周转会打断原本能演变成大赢家的仓位节奏，产生连锁的资金路径蝴蝶效应）——不是可以归咎为'字母序随机噪声'的那种模糊劣势。如果未来要继续推进，需要：(a) 用多个不同的1年窗口重复本次组合级测试，确认这次的总收益劣势不是单一窗口/单一候选路径的偶然；(b) 认真评估'nogate'设计允许止损位高于当前股价这一特征是否应该保留——用户本次要求原样沿用，但这次组合级测试暴露出的问题（更高频率的提前止损，侵蚀总收益）恰恰可能与这个特征直接相关，值得单独做一次'gated vs nogate'的组合级对照（此前per-symbol测试已经证明gated设计本身完全退化为baseline，需要另一种折中方案，而不是简单二选一）。\n【正确落地方式若未来采纳】：应作为止损公式的整体替换（support_level = max(OB_zone_price, baseline_support)代入现有97%/5天止损机制），而不是叠加或并行使用，与本次的操作化定义完全一致。",
+    "range_osc_avoid_chase": "不建议现在写入risk_rules.json作为entry前置条件。理由比order_block更明确：price_stop_loss段的改善幅度虽然是本次两个机制里最大的(+26.7pp)，但组合总收益率同样明显更差(52.90% vs baseline 86.26%，-33.36pp)，且本报告独立定位并验证了具体机制——这个'避免追高'过滤器精准挡住了本次窗口里贡献了81.3%已实现利润的那批入场信号，其中最大的单笔案例(AMD, +$473.13)被独立复算的osc数值证实是被永久性、彻底地锁死，不是排队没轮到。这是一个'机制本身设计逻辑与本次窗口的实际行情特征相冲突'的问题（本次窗口里最赚钱的机会恰好都发生在个股已经启动明显上涨之后，而'避免追高'这个设计初衷正是要过滤掉这类入场），不太可能靠调整execution_pacing或仓位大小来缓解，需要重新评估这套过滤逻辑本身是否适合当前的六线rising edge入场信号（该信号本身定义上就要求多条均线/MACD/RSI同时转多，这类信号触发时价格往往已经有一定幅度的启动，与'避免追高'存在天然的设计张力，值得在未来重新设计入场过滤器时纳入考虑）。\n【如果未来仍想探索】比较合理的下一步不是直接采纳当前的<50静态阈值，而是先做一次'放宽阈值'(比如<70/<80)的敏感性网格 + 组合级联测，检验能否在保留大部分止损段改善的同时，减少对本次这类'信号触发时已经在明显上涨中'的大赢家的误伤；同时应像order_block建议的那样，用多个不同窗口重复测试，因为本次'过滤器精准挡住最大赢家'的具体结论，很大程度上依赖这一年窗口里恰好出现了AMD/ALAB这类信号触发已在拉升途中的大行情，换一个波动特征不同的窗口，冲突程度可能会不同。",
+    "overall": "两个机制在这次组合级测试里都呈现出同一种此前未见过的模式：能改善price_stop_loss这一个局部指标，却拖累了组合总收益这个最终、最重要的指标，而且这次的拖累都有具体可追溯、独立复核过的因果链条支撑（不是简单归咎为字母序随机性）。跟ADX轮'指标本身反转'相比，这是一种更隐蔽、也更容易被误判为'可以采纳'的失败模式——如果只看price_stop_loss_segment这一张对比表，两个机制看起来都是继续改善的候选；只有把它们放进完整的组合级资金/节奏/仓位约束里才会发现问题。建议以后每次评估新的止损/entry机制候选时，把'总收益率是否也同向改善'作为跟'psl段指标是否改善'同等重要的采纳前提条件，而不是把总收益率仅仅当作一个参考性的附加指标。"
+  }
+}

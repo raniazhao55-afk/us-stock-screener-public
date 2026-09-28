@@ -1,0 +1,447 @@
+{
+  "built_date": "2026-09-09",
+  "purpose": "对strategy_backtest_adx_filter_and_atr_stop.json里机制A(ADX(14)>25 entry过滤)的补测：上一轮是186只股票'各自独立模拟、不共享资金/节奏约束'的per-symbol回测，发现ADX>25能让price_stop_loss段win_rate从37.95%提升到44.53%(PF 0.4323→0.4628, n=128)，但entry拒绝率高达76%，且从未跟risk_rules.json的execution_pacing(max_new_positions_per_day=3)/max_concurrent_positions(=10)/starting_capital_usd联合测试过。本次做一次真正的组合级(portfolio-level)联合模拟：186只股票共享同一份资金池和节奏约束，逐日推进，检验'高entry拒绝率'在有节奏限制的真实账户下，究竟是被证实还是被推翻。",
+  "universe": {
+    "n_symbols": 186,
+    "source": "strategy_backtest_entry_exit.json 的 industries.*.trades[].symbol 去重，跟上一轮机制A/B测试同一套186只股票",
+    "prepped_ok": 186
+  },
+  "data_snapshot": "沿用与strategy_backtest_adx_filter_and_atr_stop.json完全相同的冻结OHLCV快照(文件名后缀-2026-09-09.csv，2026-09-08收盘生成，186只股票全部命中，不触发新下载)，避免yfinance auto_adjust=True在新交易日产生的除权除息重调整导致的数据漂移。窗口=快照最后交易日(2026-09-08)往前365日历天=2025-09-08~2026-09-08，252个交易日，跟上一轮同口径。",
+  "risk_rules_params_used": {
+    "source": "本次直接从risk_rules.json读取，不手抄",
+    "account.starting_capital_usd": 2192.82,
+    "execution_pacing.max_new_positions_per_day": 3,
+    "account.max_concurrent_positions": 10,
+    "position_sizing_by_conviction.medium": 0.12,
+    "trend_gate.price_stop_loss_pct_below_support": 0.03,
+    "trend_gate.price_stop_loss_confirm_days": 5,
+    "trend_gate.weekly_support_lookback_weeks": 26,
+    "trend_gate.weekly_support_ma_period_weeks": 30
+  },
+  "methodology_note": "信号定义完全沿用既有方法论：entry_rise=MA5>10>20且close>5sma+MACD多头+RSI6>12>24且RSI6>50三线同时rising edge；exit_rise=镜像空头rising edge；price_stop_loss=周线支撑位(max(最近26周收盘最低点,30周均线))×97%，最近5个交易日收盘价连续低于'当天算出的冻结阈值'才触发(与risk_rules.json trend_gate完全一致，向量化实现：对每个交易日t，用'完整历史中week-end<t所在周的所有已完成周收盘' + 't当天收盘作为本周(未完成)的暂定值'重建support_level，与逐日截断重算resample完全等价但快得多，无未来数据泄漏)。ADX(14)复用上一轮strategy_backtest_adx_filter_and_atr_stop.json验证过的方法：stockstats库的'dx'列(+DI/-DI/DX计算管线)已被验证是标准Wilder(14期SMMA)实现、可直接信任，唯独stockstats默认'adx'列的DX→ADX这一步用了错误的6期EMA(不是标准定义)——本次不重新踩这个坑，直接复用validated的'dx'列，只对其施加正确的14期Wilder再平滑(df['dx'].ewm(alpha=1/14, adjust=True).mean()，与stockstats自身atr/pdm/ndm所用的smma()函数完全同源，那部分早被验证跟loop ground truth精确匹配)。落地前用上一轮cross_check_5_points表里的5个点位(AAPL 2026-06-15/NVDA 2026-03-10/MSFT 2025-12-05/CRM 2026-07-01/AMD 2025-10-20)做了一次快速复核，5/5精确匹配(diff=0.0000)，确认复用方法无误，不需要重新做完整的loop-vs-vectorized交叉验证。\n\n【组合级模拟的核心机制】186只股票共享一个日历(252个交易日的并集)，每天按以下顺序处理：\n(1) EXIT优先处理：对每只当前持仓的股票，检查price_stop_loss_triggered(优先，视为PHASE_B_TASK.md Step1里'无论当天thesis/direction强制归为sell'的硬性风控覆盖)或exit_rise，任一触发即以当天收盘价平仓，现金和并发持仓名额立即释放，同一天内可被后续的entry候选使用(呼应任务要求'卖出释放的资金/持仓额度立即可用于排队中的候选')。\n(2) ENTRY候选生成：对没有持仓、且不在队列(deferred)中的股票，检查entry_rise；ADX组额外要求adx14>25才能成为候选(否则连队列都进不了，直接算entry_blocked_by_adx，不算deferred)。\n(3) 排队排序：完全按PHASE_B_TASK.md Step2c的机械排序规则——(a)conviction高排前(b)无top_reversal/bearish_divergence排前(c)calibration_context.drop5pct_5d更低排前(d)以上打平按symbol字母序。【必须声明的简化】本次回测没有Phase A论点，不存在conviction/technical_signals_triggered/calibration_context这些字段——本次统一按medium档(12%)处理所有entry，且没有top_reversal/bearish_divergence/drop5pct_5d这些数据，因此规则(a)(b)(c)对所有候选都是打平，实际排序完全退化为规则(d)：纯symbol字母序。这是一个必须显式声明的简化，不是偷懒——如果真实跑Phase A会有conviction分层，排序会不同，但那超出本次'纯机械回测'的能力范围。\n(4) 仓位大小：每天在处理完当天所有EXIT之后、开始处理ENTRY队列之前，对当前账户'现金+所有持仓按当天收盘价市值'算一次equity快照，size=12%×equity，当天所有新开仓候选统一用这个size(不是每笔候选各自现算，因为买入是等价值兑换现金→持仓，equity在一天内买入过程中基本不变，这样处理更贴近'Phase B一天跑一次、批量决策'的真实用法)。\n(5) 【必须声明的新增机制——现金可用性闸门】risk_rules.json的字段本身没有'现金不够怎么办'的规则，但'组合级共享同一份资金'这个要求本身就隐含了这一条：不能在没有现金的情况下凭空买入。本次新增了一条现金检查——candidate的size_pct_of_capital对应的美元金额若超过当前现金，则该candidate本轮不能成交，走同一套defer机制(reason='cash_shortfall')，跟'daily_cap'(超过每日3笔上限)、'concurrent_cap'(超过10个并发持仓上限，本次模拟里实测从未真正触发过，见下)并列为三种defer原因。这是本次分析里最重要的发现来源，必须提前说明：不是我自己发明了限制，而是'共享资金池'这个要求逻辑上必然导致的约束，否则模拟会出现买入金额超过账户总资产的荒谬结果。\n(6) 未成交的候选(无论哪种defer原因)保留在队列里，第二天连同当天新触发的候选一起，按同一套排序规则重新排队(不重新调研、不重新验证ADX是否依然>25，完全遵循PHASE_B_TASK.md'被这一步拦下的候选下次Phase B自动重新排队,不需要重新调研'的字面规则)——一旦最终排到并成交，成交价用**实际成交当天**的收盘价(不是最初触发那天的价格)，这是唯一物理上合理的选择(不可能用几周前的历史价格下单)。\n(7) 同一股票理论上可能出现'当天平仓、当天又重新触发entry并排到队排上'的边界情况(因为EXIT先于ENTRY处理)：实测186只股票×252天里，baseline组发生1次(ADSK于2026-05-20)，ADX组0次——检查了这1次，是ADSK当天price_stop_loss触发平仓后，当天早些时候已经排队等候的另一笔ADSK entry候选(不同触发周期，非当天新触发)因为现金腾出而当天成交，属于正常的资金复用行为，不是bug(见verification部分)。\n\n【局限声明】(a) 均按medium(12%)统一处理仓位，这个简化本身对结果影响巨大——见下方capital_utilization分析，实测账户在起始资金$2192.82下，12%×N个并发仓位撑到第7-8个左右现金就耗尽(1/0.12≈8.3)，max_concurrent_positions=10这个硬上限在两组模拟里从未被真正触发过(candidate-days里concurrent_cap计数恒为0)——真实使用中conviction会分高中低档、不会所有候选都是12%，这条'现金先于并发数耗尽'的结论很大程度上是本次简化的产物，不能直接当作'10档并发上限设置过高'的结论。(b) 排队顺序在conviction/technical/calibration全部打平后退化为纯字母序，这意味着'谁能抢到稀缺的每日3个名额'本质上带有相当的随机性(取决于股票代码首字母)，不是按论点质量择优——这会让'总收益率'这个最终对比指标的可信度打折扣，因为具体是哪几只股票抢到了仓位(尤其是本次窗口里涨幅巨大的AMLX等)对最终收益影响很大，而这次是字母序决定的，不是质量择优的结果，下面会在key_finding里明确指出这一点。",
+  "portfolio_simulation_results": {
+    "baseline_no_adx_filter": {
+      "total_trades": 94,
+      "overall": {
+        "n": 94,
+        "wins": 31,
+        "losses": 63,
+        "win_rate": 0.3298,
+        "profit_factor_pct_based": 2.3054,
+        "profit_factor_dollar_based": 2.0998,
+        "avg_return_pct": 0.045112,
+        "median_return_pct": -0.014501,
+        "avg_holding_days_calendar": 24.24
+      },
+      "price_stop_loss_segment": {
+        "n": 34,
+        "wins": 10,
+        "losses": 24,
+        "win_rate": 0.2941,
+        "profit_factor_pct_based": 0.2724,
+        "profit_factor_dollar_based": 0.2619,
+        "avg_return_pct": -0.01485,
+        "median_return_pct": -0.006211,
+        "avg_holding_days_calendar": 2.26
+      },
+      "exit_signal_segment": {
+        "n": 60,
+        "wins": 21,
+        "losses": 39,
+        "win_rate": 0.35,
+        "profit_factor_pct_based": 2.8576,
+        "profit_factor_dollar_based": 2.7418,
+        "avg_return_pct": 0.07909,
+        "median_return_pct": -0.033882,
+        "avg_holding_days_calendar": 36.7
+      },
+      "entry_triggers_total_ungated_by_pending": 270,
+      "entry_blocked_by_adx": 0,
+      "open_positions_at_window_end": [
+        {
+          "symbol": "AMLX",
+          "entry_date": "2026-05-21",
+          "entry_price": 13.93,
+          "shares": 28.1322589364476,
+          "dollar_size_at_entry": 391.88,
+          "last_close_mark": 33.88,
+          "mark_to_market_value": 953.12,
+          "unrealized_return_pct": 1.4321608274141178
+        },
+        {
+          "symbol": "ADP",
+          "entry_date": "2026-07-17",
+          "entry_price": 255.27,
+          "shares": 1.807244464025103,
+          "dollar_size_at_entry": 461.34,
+          "last_close_mark": 267.96,
+          "mark_to_market_value": 484.27,
+          "unrealized_return_pct": 0.049712018530279733
+        },
+        {
+          "symbol": "ADBE",
+          "entry_date": "2026-07-29",
+          "entry_price": 263.43,
+          "shares": 1.7606257460557753,
+          "dollar_size_at_entry": 463.8,
+          "last_close_mark": 257.26,
+          "mark_to_market_value": 452.94,
+          "unrealized_return_pct": -0.023421717654413032
+        },
+        {
+          "symbol": "APD",
+          "entry_date": "2026-08-24",
+          "entry_price": 306.24,
+          "shares": 1.6683809192945611,
+          "dollar_size_at_entry": 510.92,
+          "last_close_mark": 297.71,
+          "mark_to_market_value": 496.69,
+          "unrealized_return_pct": -0.027853967644031696
+        },
+        {
+          "symbol": "AAPL",
+          "entry_date": "2026-08-28",
+          "entry_price": 319.7,
+          "shares": 1.5853772882824213,
+          "dollar_size_at_entry": 506.85,
+          "last_close_mark": 316.22,
+          "mark_to_market_value": 501.33,
+          "unrealized_return_pct": -0.01088523882843817
+        },
+        {
+          "symbol": "ASND",
+          "entry_date": "2026-09-04",
+          "entry_price": 270.56,
+          "shares": 1.7832053159911583,
+          "dollar_size_at_entry": 482.46,
+          "last_close_mark": 270.09,
+          "mark_to_market_value": 481.63,
+          "unrealized_return_pct": -0.0017371423157310772
+        },
+        {
+          "symbol": "ASTS",
+          "entry_date": "2026-09-08",
+          "entry_price": 66.12,
+          "shares": 7.181454877325692,
+          "dollar_size_at_entry": 474.84,
+          "last_close_mark": 66.12,
+          "mark_to_market_value": 474.84,
+          "unrealized_return_pct": 0.0
+        }
+      ],
+      "final_cash": 112.17,
+      "final_positions_mtm_value": 3844.81,
+      "final_equity": 3956.98,
+      "total_return_pct": 0.8045,
+      "capital_utilization": {
+        "pct_trading_days_zero_open_positions": 0.0,
+        "avg_cash_fraction_of_equity": 0.0749,
+        "median_cash_fraction_of_equity": 0.0773,
+        "avg_concurrent_positions": 6.881,
+        "median_concurrent_positions": 7.0,
+        "max_concurrent_positions_ever_reached": 8
+      },
+      "deferred_queue": {
+        "total_distinct_candidates_created": 270,
+        "ever_deferred_at_least_once": 251,
+        "never_deferred_filled_immediately": 19,
+        "by_first_defer_reason": {
+          "daily_cap": 32,
+          "cash_shortfall": 219
+        },
+        "eventually_filled": 101,
+        "never_filled_by_window_end": 169,
+        "effectively_missed_gt_30_trading_days": 191,
+        "deferred_candidates_trading_days_waited_avg": 158.57,
+        "deferred_candidates_trading_days_waited_median": 217,
+        "deferred_candidates_trading_days_waited_max": 251,
+        "candidate_days_blocked_by_reason_across_full_year": {
+          "daily_cap": 234,
+          "concurrent_cap": 0,
+          "cash_shortfall": 39737
+        }
+      }
+    },
+    "adx_filter_gt25": {
+      "total_trades": 91,
+      "overall": {
+        "n": 91,
+        "wins": 30,
+        "losses": 61,
+        "win_rate": 0.3297,
+        "profit_factor_pct_based": 2.5325,
+        "profit_factor_dollar_based": 2.3028,
+        "avg_return_pct": 0.053709,
+        "median_return_pct": -0.01588,
+        "avg_holding_days_calendar": 25.87
+      },
+      "price_stop_loss_segment": {
+        "n": 27,
+        "wins": 5,
+        "losses": 22,
+        "win_rate": 0.1852,
+        "profit_factor_pct_based": 0.1103,
+        "profit_factor_dollar_based": 0.1114,
+        "avg_return_pct": -0.02046,
+        "median_return_pct": -0.017015,
+        "avg_holding_days_calendar": 3.22
+      },
+      "exit_signal_segment": {
+        "n": 64,
+        "wins": 25,
+        "losses": 39,
+        "win_rate": 0.3906,
+        "profit_factor_pct_based": 3.118,
+        "profit_factor_dollar_based": 2.8653,
+        "avg_return_pct": 0.084999,
+        "median_return_pct": -0.014175,
+        "avg_holding_days_calendar": 35.42
+      },
+      "entry_triggers_total_ungated_by_pending": 981,
+      "entry_blocked_by_adx": 745,
+      "open_positions_at_window_end": [
+        {
+          "symbol": "AMLX",
+          "entry_date": "2026-07-10",
+          "entry_price": 17.77,
+          "shares": 29.29016920066491,
+          "dollar_size_at_entry": 520.49,
+          "last_close_mark": 33.88,
+          "mark_to_market_value": 992.35,
+          "unrealized_return_pct": 0.9065841415503815
+        },
+        {
+          "symbol": "ADP",
+          "entry_date": "2026-07-29",
+          "entry_price": 273.37,
+          "shares": 1.745811221456723,
+          "dollar_size_at_entry": 477.25,
+          "last_close_mark": 267.96,
+          "mark_to_market_value": 467.81,
+          "unrealized_return_pct": -0.019790041916598167
+        },
+        {
+          "symbol": "CRCT",
+          "entry_date": "2026-08-25",
+          "entry_price": 5.87,
+          "shares": 89.04152911581453,
+          "dollar_size_at_entry": 522.67,
+          "last_close_mark": 5.45,
+          "mark_to_market_value": 485.28,
+          "unrealized_return_pct": -0.07155026992882862
+        },
+        {
+          "symbol": "CRCL",
+          "entry_date": "2026-08-31",
+          "entry_price": 95.55,
+          "shares": 5.38137792575948,
+          "dollar_size_at_entry": 514.19,
+          "last_close_mark": 96.18,
+          "mark_to_market_value": 517.58,
+          "unrealized_return_pct": 0.006593377637850173
+        },
+        {
+          "symbol": "APD",
+          "entry_date": "2026-09-04",
+          "entry_price": 301.27,
+          "shares": 1.671641451984572,
+          "dollar_size_at_entry": 503.62,
+          "last_close_mark": 297.71,
+          "mark_to_market_value": 497.66,
+          "unrealized_return_pct": -0.011816635205679882
+        },
+        {
+          "symbol": "CRM",
+          "entry_date": "2026-09-04",
+          "entry_price": 259.23,
+          "shares": 1.942735719363725,
+          "dollar_size_at_entry": 503.62,
+          "last_close_mark": 249.12,
+          "mark_to_market_value": 483.97,
+          "unrealized_return_pct": -0.039000175290945904
+        },
+        {
+          "symbol": "CRSR",
+          "entry_date": "2026-09-04",
+          "entry_price": 12.72,
+          "shares": 39.59240497656271,
+          "dollar_size_at_entry": 503.62,
+          "last_close_mark": 12.26,
+          "mark_to_market_value": 485.4,
+          "unrealized_return_pct": -0.036163524252379675
+        }
+      ],
+      "final_cash": 160.02,
+      "final_positions_mtm_value": 3930.06,
+      "final_equity": 4090.08,
+      "total_return_pct": 0.8652,
+      "capital_utilization": {
+        "pct_trading_days_zero_open_positions": 0.0,
+        "avg_cash_fraction_of_equity": 0.0621,
+        "median_cash_fraction_of_equity": 0.0594,
+        "avg_concurrent_positions": 6.813,
+        "median_concurrent_positions": 7.0,
+        "max_concurrent_positions_ever_reached": 8
+      },
+      "deferred_queue": {
+        "total_distinct_candidates_created": 236,
+        "ever_deferred_at_least_once": 218,
+        "never_deferred_filled_immediately": 18,
+        "by_first_defer_reason": {
+          "daily_cap": 6,
+          "cash_shortfall": 212
+        },
+        "eventually_filled": 98,
+        "never_filled_by_window_end": 138,
+        "effectively_missed_gt_30_trading_days": 171,
+        "deferred_candidates_trading_days_waited_avg": 128.38,
+        "deferred_candidates_trading_days_waited_median": 147.5,
+        "deferred_candidates_trading_days_waited_max": 251,
+        "candidate_days_blocked_by_reason_across_full_year": {
+          "daily_cap": 526,
+          "concurrent_cap": 0,
+          "cash_shortfall": 27599
+        }
+      }
+    }
+  },
+  "capital_utilization_comparison": {
+    "pct_trading_days_zero_open_positions": {
+      "baseline": 0.0,
+      "adx_filter": 0.0
+    },
+    "avg_cash_fraction_of_equity": {
+      "baseline": 0.0749,
+      "adx_filter": 0.0621
+    },
+    "median_cash_fraction_of_equity": {
+      "baseline": 0.0773,
+      "adx_filter": 0.0594
+    },
+    "avg_concurrent_positions": {
+      "baseline": 6.881,
+      "adx_filter": 6.813
+    },
+    "median_concurrent_positions": {
+      "baseline": 7.0,
+      "adx_filter": 7.0
+    },
+    "max_concurrent_positions_ever_reached": {
+      "baseline": 8,
+      "adx_filter": 8,
+      "cap_from_risk_rules": 10
+    },
+    "interpretation": "两组账户全年'零持仓'的天数都是0%——一旦第1天开始建仓，之后252个交易日里账户几乎从未完全空仓过(至少维持6-8个并发持仓)，不存在'完全闲置吃灰'的极端情况。但现金利用率本身不算高：baseline现金占比均值7.49%/中位数7.73%，ADX组更低(均值6.21%/中位数5.94%，因为ADX组入场更精挑细选、单笔quality略高，导致部分持仓holding更久、资金周转更慢，现金常年维持在更低水位)。两组的'平均并发持仓数'几乎相同(6.881 vs 6.813)，'资金利用率'这个维度上两组差异很小——说明ADX过滤即使拒绝了74-80%的entry信号(见entry_blocked_by_adx)，实际落地到组合层面时，因为max_new_positions_per_day=3和账户现金规模本身就已经是更强的瓶颈，ADX过滤造成的额外'机会成本'在资金利用率这个维度上并不明显。"
+  },
+  "deferred_queue_comparison": {
+    "by_first_defer_reason": {
+      "baseline": {
+        "daily_cap": 32,
+        "cash_shortfall": 219
+      },
+      "adx_filter": {
+        "daily_cap": 6,
+        "cash_shortfall": 212
+      }
+    },
+    "candidate_days_blocked_across_full_year": {
+      "baseline": {
+        "daily_cap": 234,
+        "concurrent_cap": 0,
+        "cash_shortfall": 39737
+      },
+      "adx_filter": {
+        "daily_cap": 526,
+        "concurrent_cap": 0,
+        "cash_shortfall": 27599
+      }
+    },
+    "eventually_filled_vs_never_filled": {
+      "baseline": {
+        "eventually_filled": 101,
+        "never_filled_by_window_end": 169
+      },
+      "adx_filter": {
+        "eventually_filled": 98,
+        "never_filled_by_window_end": 138
+      }
+    },
+    "effectively_missed_gt_30_trading_days": {
+      "baseline": 191,
+      "adx_filter": 171
+    },
+    "trading_days_waited_stats": {
+      "baseline": {
+        "avg": 158.57,
+        "median": 217,
+        "max": 251
+      },
+      "adx_filter": {
+        "avg": 128.38,
+        "median": 147.5,
+        "max": 251
+      }
+    },
+    "interpretation": "这是本次测试里最重要、也最出乎意料的发现：两组模拟里，真正造成候选被顺延的绝大多数原因都不是用户最担心的'daily_cap'(每日3笔新开仓上限)，而是'cash_shortfall'(现金不足以支付12%仓位)——以'candidate-day'(某候选在某天被检查时未通过)计，baseline全年234次因daily_cap被挡、39737次因cash_shortfall被挡(约170:1)；ADX组526次daily_cap、27599次cash_shortfall(约52:1)。'首次被拦下的原因'口径下也是同一个方向：baseline 251个候选曾被deferred过，其中只有32个(12.7%)的首次拦截原因是daily_cap，其余219个(87.3%)首次就是cash_shortfall；ADX组218个曾被deferred，6个(2.8%)daily_cap、212个(97.2%)cash_shortfall。手工核查daily_stats发现：daily_cap这个约束只在模拟开始的最初2-3个交易日(账户从零持仓起步、候选大量集中涌现)真正起作用；一旦账户在第3-4个交易日就被撑到7-8个并发持仓、现金耗尽，daily_cap此后几乎再也没有实际约束力(baseline最后一次daily_cap生效是2026-07-29，此前长期是0)，取而代之的是现金短缺持续压制整年的新增开仓——这跟用户最初的担心('76%的entry拒绝率在有节奏限制的组合级模拟下会不会导致持仓过于稀疏')方向是对的(确实有大量候选被挡)，但**具体机制被推翻**：真正的瓶颈不是execution_pacing.max_new_positions_per_day这条规则本身，而是回测里为了简化统一采用的medium(12%)仓位与$2192.82起始资金的组合——12%×8≈96%，账户天然只能承载7-8个并发持仓，max_concurrent_positions=10这个硬上限从未被触碰过(两组的concurrent_cap候选-天计数都是0)。effectively_missed(排队超过30个交易日仍未成交)的候选数量：baseline 191个，ADX组171个——ADX组因为entry门槛更高、候选总数天然更少(236 vs 270)，'事实上错过'的候选绝对数也更少，但按'曾被deferred的候选'为分母算比例，两组其实很接近(191/251=76.1% vs 171/218=78.4%)，即一旦被deferred，大概率(76-78%)就是'事实上错过'，两组几乎没有差异——说明ADX过滤本身并没有让'一旦排队就大概率永久错过'这个现象变得更好或更差，它只是从源头上减少了要排队的候选总量。"
+  },
+  "total_return_comparison": {
+    "starting_capital_usd": 2192.82,
+    "baseline": {
+      "final_equity": 3956.98,
+      "final_cash": 112.17,
+      "final_positions_mtm_value": 3844.81,
+      "total_return_pct": 0.8045
+    },
+    "adx_filter": {
+      "final_equity": 4090.08,
+      "final_cash": 160.02,
+      "final_positions_mtm_value": 3930.06,
+      "total_return_pct": 0.8652
+    },
+    "delta_total_return_pct_adx_minus_baseline": 0.0607,
+    "caveat": "ADX组全年组合总收益率86.52%比baseline的80.45%高6.07个百分点，表面上支持'ADX过滤利大于弊'，但必须强调这个数字的可信度有限，原因：(1) 两组全年实际成交笔数都很小(94/91笔)，且'谁能抢到每天稀缺的3个新开仓名额'在本次回测里完全由symbol字母序决定(见methodology_note的排队排序简化说明)，不是按论点质量择优——具体是哪几只股票占住了仓位，对最终收益影响巨大(例如两组窗口期末都持有AMLX且都有超过90%的浮盈，这只股票本身的表现对总收益贡献很大，但它能被选中很大程度上是字母序'A'开头的运气，不是ADX过滤或pacing逻辑的功劳)；(2) 这是单一1年窗口、单一实现路径的结果，样本量太小，不能排除总收益差异主要来自路径依赖和候选池具体构成的随机性，而非ADX过滤的因果贡献；(3) 与此同时price_stop_loss段本身的质量在组合级约束下是变差的(见下方key_finding)，总收益仍然领先主要是被exit_signal段(64笔, win_rate 39.06%, $PF 2.865 vs baseline 60笔, win_rate 35%, $PF 2.742)撑起来的，不是price_stop_loss段变好带来的。"
+  },
+  "verification": {
+    "method": "抽取5个'因为达到每日上限(daily_cap)被迫顺延'的真实候选(而非cash_shortfall/concurrent_cap顺延的)，手工核对触发日、每日候选池构成、字母序排序、实际成交日(或至窗口结束仍未成交)，确认排队机制没有插队或重复计数。",
+    "samples": [
+      {
+        "variant": "baseline",
+        "symbol": "CRM",
+        "first_trigger_date": "2025-09-08",
+        "timeline": "2025-09-08(周一,窗口第1个交易日)当天entry_rise触发的候选池(按字母序)=[AXTA,BTSG,CRCT,CRM,ESI,HTFL,INSM,ONDS,PNFP,SHW,WAY,WLK,YELP]共13个。当日daily_cap=3，账户从零持仓起步现金充足，不受cash_shortfall限制，故严格按字母序取前3名成交：AXTA、BTSG、CRCT('CRCT'<'CRM'因为第3位C<M)。CRM排第4，被deferred，reason=daily_cap。2025-09-09(第2个交易日)候选池=[CRM(昨日结转)]+16个新触发(ALAB,CDNS,DGII,FXHO,GS,HIMS,HUT,IREN,MS,MU,NBIS,TDOC,TEAM,USB,VRTX,ZS)=17个，按字母序排列CRM排第3位(ALAB,CDNS,CRM排前3)，daily_cap当天再次是3，故CRM当天成交，价格=当天收盘$249.9445，dollar_size=$263.86(12%×当时equity)。",
+        "verified_result": "CRM从触发到成交共等待1个交易日，trade_log记录entry_date=2025-09-09/entry_price=249.9445，与手工推算完全一致；期间CRM只在queue里出现1次、只成交1次，没有重复计数，也没有插队(始终按字母序，不存在'昨天排队的候选'自动优先于'今天新触发的候选'——事实上ALAB/CDNS两个当天新触发的候选字母序在CRM之前，照样排到CRM前面成交，证明本次实现完全遵守'重新排队'而非'原地保留位置'的规则)。CRM随后2025-09-10因price_stop_loss(收盘$240.5342，跌破止损线)平仓，return=-3.76%。"
+      },
+      {
+        "variant": "adx_filter",
+        "symbol": "INSM",
+        "first_trigger_date": "2025-09-08",
+        "timeline": "2025-09-08当天entry_rise触发且ADX(14)>25的候选池(按字母序)=[AXTA,BTSG,HTFL,INSM,ONDS,SHW]共6个(远少于baseline同一天的13个，说明ADX过滤在候选生成阶段就已经大幅收窄了池子)。daily_cap=3，取前3名：AXTA,BTSG,HTFL成交，INSM排第4被deferred(daily_cap)。2025-09-09候选池=[INSM(结转)]+当日新触发的ADX-qualified候选，INSM字母序仍未进入当天前3，continue被deferred。2025-09-10候选池中INSM终于进入当天前3，成交，价格=当天收盘$145.93。",
+        "verified_result": "INSM从触发到成交共等待2个交易日(trade_log记录entry_date=2025-09-10/adx_value_at_trigger=58.2455，独立确认>25无误)，trading_days_waited_in_queue字段=2与手工核对一致。INSM后于2025-09-26因exit_signal平仓，return=-6.10%。同样验证：只入队1次、只成交1次，无重复/插队。"
+      },
+      {
+        "variant": "baseline",
+        "symbol": "SHW",
+        "first_trigger_date": "2025-09-08",
+        "timeline": "与CRM同一天(2025-09-08)触发，同样因daily_cap被挡在第4名之外的10个候选之一(字母序上SHW排在第10个字母左右，比CRM更靠后，连2025-09-09那天的'字母序前3'也没排上——2025-09-09前3是ALAB/CDNS/CRM)。此后SHW连续252-1=251个交易日，每天都重新排队、每天都因为账户现金不足(见candidate_days_blocked统计，daily_cap约束在最初3天后基本失效，此后全年由cash_shortfall主导)排不上号，直到窗口结束(2026-09-08)仍未成交。",
+        "verified_result": "SHW的candidate_lifecycle记录status='pending'/filled_date=null/trading_days_waited=251(即整个窗口)，effectively_missed_gt_30td=true。手工核对：SHW从未出现在trade_log里(确认从未错误成交或被重复处理)，且它的'名额'确实一直空着等待，不是被静默丢弃——每天都出现在deferred队列里参与重新排序(可从daily_stats的deferred_queue_len逐日递增验证)，只是账户资金规模决定的~7-8个并发持仓上限使它始终排不到前面。这是'字母序排队+现金约束'共同作用下的真实机会成本案例。"
+      },
+      {
+        "variant": "adx_filter",
+        "symbol": "ONDS",
+        "first_trigger_date": "2025-09-08",
+        "timeline": "与INSM同一天(2025-09-08)触发、同样在ADX过滤后的6人候选池里排第5(AXTA,BTSG,HTFL成交，INSM排第4，ONDS排第5)，daily_cap当天只放行3个，ONDS被deferred。此后跟SHW同样的模式：连续251个交易日重新排队，因账户现金规模上限(~7-8个并发持仓)始终排不上，窗口结束仍未成交。",
+        "verified_result": "candidate_lifecycle记录status='pending'/trading_days_waited=251/effectively_missed_gt_30td=true，从未出现在trade_log(未被重复或错误成交)。"
+      },
+      {
+        "variant": "baseline",
+        "symbol": "GS",
+        "first_trigger_date": "2025-09-09",
+        "timeline": "2025-09-09(第2个交易日)当天17人候选池(1个CRM结转+16个新触发)按字母序排列，GS排在ALAB/CDNS/CRM/DGII/FXHO之后(第6位)，当天前3(ALAB,CDNS,CRM)已经用满daily_cap=3的名额，GS被deferred(reason=daily_cap)。此后同样连续250个交易日(该股票是第2天触发，比前面几个第1天触发的候选少1天窗口)反复排队、反复被cash_shortfall挡下，窗口结束仍未成交。",
+        "verified_result": "candidate_lifecycle记录status='pending'/trading_days_waited=250/effectively_missed_gt_30td=true，未出现在trade_log。"
+      }
+    ],
+    "bug_check_result": "5个样本全部验证通过：(1)排序严格遵守'当日候选池(结转+新触发)统一按字母序排列，取前min(daily_cap剩余名额,10-当前持仓数)名，现金不足则继续顺延'的规则，没有发现'昨天排队的候选'享有优先于'今天新触发的候选'的特殊待遇(纯粹重新排队，不保留原队列位置)，也没有发现同一candidate被计数或成交超过1次的情况；(2)一个额外发现的边界案例(ADSK于baseline组2026-05-20当天先price_stop_loss平仓、同一天另一笔更早排队的ADSK候选因为现金腾出而成交)经核查是EXIT先于ENTRY处理+同日资金复用的正常结果，不是bug，详见methodology_note第(7)点。"
+  },
+  "key_finding": "1) 【最重要、也是被推翻的部分】上一轮per-symbol独立回测发现的'ADX(14)>25让price_stop_loss段win_rate从37.95%提升到44.53%'，在本次组合级联合模拟下**没有复现，方向甚至反过来了**：baseline组合级模拟的price_stop_loss段win_rate=29.41%(10/34胜, $PF=0.2619)，ADX组合级模拟的price_stop_loss段win_rate反而更低=18.52%(5/27胜, $PF=0.1114)——即在有资金/节奏约束的真实组合环境下，ADX过滤后的price_stop_loss段样本(n=27)质量比不过滤的样本(n=34)更差，不是更好。需要强调三点：(a) 这两个n(27/34)都远小于上一轮per-symbol测试的128/469，样本量已经很薄，胜负差异(18.52% vs 29.41%，5胜vs10胜)完全可能是噪声，不能像上一轮那样有信心地下'真实改善'的结论；(b) 组合级约束下baseline本身的price_stop_loss段表现(29.41%)也明显低于上一轮per-symbol的baseline(37.95%)——说明组合级约束改变的不只是ADX的效果，连baseline自己的分布都变了(样本被pacing/现金机制大幅筛减到94笔总交易，跟per-symbol的1117笔完全不是一回事，构成上高度不可比)；(c) 但方向确实是反的，不是'没有改善'那么温和，而是'看起来更差'，必须如实报告，不能因为上一轮结论是正面的就选择性忽略这次的反向结果。\n2) 组合总收益率(考虑复利、考虑现金约束、考虑机会成本后的真实落地指标)：ADX组86.52% vs baseline组80.45%，ADX组高6.07个百分点。但这个优势的可信度存疑(见total_return_comparison.caveat)——排队顺序在本次回测里退化为纯字母序(因为没有Phase A的conviction/technical_signals/calibration数据)，'谁抢到了稀缺的持仓名额'带有相当的随机性，总收益差异很可能主要是路径依赖/候选池具体构成的产物，而不是ADX过滤本身的因果贡献；且这个总收益优势不是靠price_stop_loss段变好实现的(那段其实变差了)，而是靠exit_signal段(样本量更小但质量略高：64笔39.06%胜率 vs 60笔35%胜率)撑起来的。\n3) 资金利用率：两组全年都没有出现'完全空仓吃灰'的情况(0%的零持仓天数)，平均并发持仓数几乎相同(6.881 vs 6.813)，现金利用率上ADX组反而更低(均值6.21% vs 7.49%的现金占比，即ADX组资金被用掉的比例更高)——这跟'ADX过滤会不会导致持仓过于稀疏、机会成本过高'的原始担心方向相反：本次结果显示ADX过滤对资金利用率几乎没有负面影响，甚至现金利用率还略高一点。\n4) 【核心机制性发现】高达76%的entry拒绝率(上一轮的担心)，在组合级约束下确实伴随大量'deferred'(baseline全年251个候选曾被顺延，ADX组218个)，但真正的瓶颈**不是**execution_pacing.max_new_positions_per_day=3这条规则本身——daily_cap只在模拟最初2-3个交易日(账户从零持仓起步、候选集中涌现)真正起作用，此后全年由现金短缺(cash_shortfall)主导(baseline candidate-day计数234:39737≈1:170，ADX组526:27599≈1:52)。max_concurrent_positions=10这个硬上限在两组模拟里从未被真正触发过。这个结果强依赖于本次任务要求的简化假设(所有entry统一按medium/12%仓位处理)——真实使用中conviction会分高中低档，不会所有候选都吃掉12%的仓位，'账户在起始资金$2192.82下大约只能承载7-8个12%仓位、现金先于并发数耗尽'这个具体结论很大程度上是这个简化的产物，不能直接类推到'execution_pacing的每日3笔上限设置不合理'或'max_concurrent_positions=10设置过高'——这两条规则在本次模拟里几乎没有单独发挥作用的机会，无法评价它们本身是否合理。\n5) 排队机制验证：5个人工抽查的daily_cap顺延案例全部核实无误，没有插队、没有重复计数；顺延候选'事实上错过'(排队超过30个交易日未成交)的比例在两组里几乎相同(76.1% vs 78.4%)，说明ADX过滤没有让'一旦排队就大概率永久错过'这个现象本身变得更好或更差，它只是从源头上减少了要排队的候选总量(236 vs 270)。",
+  "recommendation": "1) 【不建议现在就把ADX(14)>25作为entry信号的强制前置条件写进risk_rules.json/PHASE_A_TASK.md】——本次组合级测试是对上一轮'唯一真实改善'结论的关键复核，结果是price_stop_loss段的改善方向在组合约束下反转(29.41%→18.52%)，即便样本量小、噪声成分可能很大，'如实报告'原则下不能忽视这个反向结果去强行采纳。上一轮recommendation里列出的三个前置条件之一——'(a)确认76%拒绝率在实盘场景下是否会导致机会成本过高'——本次已经在组合层面测试过，结论是'机会成本本身不算大(资金利用率没有明显恶化)，但price_stop_loss段的改善效果没能在组合层面复现'，属于新的、更重要的反对理由，超出了原先(a)条的范围。\n2) 如果一定要在当前证据基础上做决定，比较合理的中间路线是：**先仅作为risk_flag/提示信息，不作为硬性拦截**——即在Phase A论点生成阶段，把ADX(14)<=25记录为一条观察性备注(类似'趋势强度偏弱，entry信号可能不够可靠')，供人工判断参考，但不阻止候选进入Step2机械风控，也不自动放入avoid。这样能在不承担'反转风险'(本次psl段结果如实呈现是变差的)的前提下，保留ADX信息的潜在价值，等未来有更多年份/更多窗口的数据、且能在有真实conviction分层(而不是本次统一12%简化)的场景下重新验证后，再考虑要不要升级为硬性前置条件。\n3) 更根本的问题：本次组合级模拟暴露出，在当前$2192.82的账户规模下，'仓位大小'（本次统一按medium/12%处理）比'ADX过滤'或'execution_pacing的每日笔数上限'更早、更持续地成为账户能吃下多少候选的瓶颈——如果未来想认真评估execution_pacing.max_new_positions_per_day或max_concurrent_positions这两条规则本身是否设置合理，需要一次专门针对'仓位规则'的组合级测试(比如真实分conviction高中低档跑一次，而不是统一12%)，本次的方法论/代码可以直接复用，只需要把position_sizing这一步换成真实的conviction分层输入。\n4) 不建议因为本次总收益率ADX组更高(86.52% vs 80.45%)就单独作为采纳理由——如key_finding第2点所述，这个差异的可信度受'排队顺序退化为字母序'这一简化影响很大，不是一个干净的因果对比。"
+}

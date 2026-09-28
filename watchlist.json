@@ -1,0 +1,13 @@
+{
+  "_comment": "自选股代码列表(美股ticker，不带交易所前缀)。这里是示例，换成你自己关注的票。",
+  "display_name": "my_watchlist",
+  "symbols": [
+    "NVDA",
+    "MSFT",
+    "AAPL",
+    "GOOGL",
+    "AMD"
+  ],
+  "_comment_held": "当前真实持仓登记在held_positions里(symbol/shares/cost_basis_usd每股加权成本/date_acquired)，Phase A/B会强制覆盖。系统不接券商，每次实际买卖后必须手动更新这里；这是系统唯一信任的持仓来源。",
+  "held_positions": []
+}

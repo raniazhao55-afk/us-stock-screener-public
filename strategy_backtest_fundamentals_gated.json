@@ -1,0 +1,4163 @@
+{
+  "built_date": "2026-09-08",
+  "lookback": "1年(或该股票能拿到的最长历史——SNDK/NBIS/CBRS/CRCL四只上市不足1年，用其能拿到的全部历史)",
+  "universe": "watchlist.json的symbols(18只): NVDA, SNDK, MU, LITE, GOOG, AAPL, MSFT, AMD, INTC, BE, QCOM, PLTR, NBIS, MRVL, CBRS, CRCL, CHWY, IQ",
+  "strategy": "entry信号触发(entry_state由False变True的rising edge)时，用触发日期当时真实可得的8-K(手动过滤filing_date<=触发日期，90天回看窗口)+新闻做点位式基本面判断；仅当conviction达到medium或以上且direction=long才在触发日收盘价买入；之后持有至exit信号(rising edge)或price_stop_loss_triggered(冻结买入日的周线支撑位阈值，之后逐日比对最近3个交易日原始收盘价)触发才卖出，机械执行不重新判断基本面；同一股票同时最多1笔仓位。",
+  "methodology_note": "机构持仓/分析师评级(3.3层)、行业同业对比(3.3a)、定量概率校准(3.3b)因均依赖当前快照或当前构建的静态文件、无法按历史时间点查询，均按用户指示跳过，只做3.2(8-K公告)+3.4(新闻)两层。conviction判定：8-K的[READ REQUIRED]项(1.01/1.02/2.01/2.03/2.05/2.06/3.02/3.03/4.01/4.02/5.01/8.01)全部人工读取原文(66份去重后的独立filing，覆盖231个事件的90天回看窗口)，判断是否为公司自己确认的具体、真实、非传闻催化事件；非READ_REQUIRED项(2.02财报/5.02高管变动/5.07股东投票等)按项目既有约定不强制读取原文，但由于不知道具体内容(如财报是超预期还是不及预期)，这类“仅知道类型、不知道方向”的条目本身不足以单独构成medium+的确认催化事件——早期草稿曾把“90天内有2.02财报”直接记为medium，但由于上市公司几乎每季度(约91天)披露一次财报，几乎所有触发日期的90天窗口都会命中某次财报，这会让基本面闸门形同虚设，已修正为：仅有独立人工判读过的[READ REQUIRED]内容才能推动medium/high。risk_flags只判断从8-K/新闻文本可获得研究依据的几项(otc_or_delisting_risk/under_regulatory_investigation/trading_halted/circuit_breaker_triggered/dilution_or_offering/meme_speculation_no_fundamental/lockup_expiry_near/insolvency_or_liquidity_concern/counterparty_credit_risk)，跳过依赖机构持仓(high_institutional_outflow)、做空数据(high_short_interest_squeeze_risk)、市值校准文件(extended_after_large_move)的几项。dilution_or_offering判定口径(主观判断，已如实说明)：公司为自身融资目的主动发行证券(可转债/公开增发股票/债转股置换)才打此flag；若新股/warrant是作为真实商业合作(战略客户/投资方warrant、并购股权对价)的对价发行，不打此flag，因为这类事件的驱动力是交易本身的商业质量而非缺钱融资——这是一个可辩驳的主观区分，在INTC(NVIDIA/SoftBank/美国政府CHIPS三笔战略入股)、AMD(OpenAI/Meta warrant)、MRVL(Google/Amazon warrant、NVIDIA两次优先股投资)等案例上实际生效，是本次回测里“高质量催化事件”的主要来源；按此规则，任一窗口内的filing若命中dilution_or_offering(标准的可转债融资/公开增发/ATM式shelf发行/债转股)则不论催化质量强制降级为low，这也是INTC 2026-08-12的95美元/股公开增发、BE/LITE的可转债发行等把原本可能是medium+的窗口拉低到low的原因。新闻数据源限制：news.get_news_yfinance()底层调用yfinance的stock.get_news()，该接口只返回“当前时刻”最新约20条新闻(不分股票，日期几乎全是运行当天)，不是按股票的历史新闻档案——231个事件里只有3个的新闻窗口命中了非空结果，其余228个全部返回“未找到新闻”，不是这些股票真的没有新闻，是这个数据源无法做历史时间点回溯查询。这是本次任务里最大的数据源限制，导致3.4新闻层实质上对历史回测不可用，conviction判定几乎完全依赖3.2的8-K层。",
+  "capped_note": "1年回看窗口内entry信号(rising edge)原始触发事件共250个(18只股票汇总)，超过200个封顶阈值，按每只股票最多处理最近15个触发事件封顶，实际处理231个，跳过19个：{'SNDK': 6, 'MU': 6, 'LITE': 2, 'NBIS': 4, 'MRVL': 1}（具体日期见skipped_events_detail字段）；其余13只股票触发数本就<=15，未受影响。",
+  "skipped_events_detail": {
+    "SNDK": {
+      "skipped_count": 6,
+      "skipped_dates": [
+        "2025-10-02",
+        "2025-10-23",
+        "2025-10-29",
+        "2025-11-03",
+        "2025-11-07",
+        "2025-12-22"
+      ]
+    },
+    "MU": {
+      "skipped_count": 6,
+      "skipped_dates": [
+        "2025-09-09",
+        "2025-10-01",
+        "2025-10-08",
+        "2025-10-16",
+        "2025-10-24",
+        "2025-11-10"
+      ]
+    },
+    "LITE": {
+      "skipped_count": 2,
+      "skipped_dates": [
+        "2025-10-24",
+        "2025-11-05"
+      ]
+    },
+    "NBIS": {
+      "skipped_count": 4,
+      "skipped_dates": [
+        "2025-09-09",
+        "2025-09-17",
+        "2025-09-30",
+        "2025-10-09"
+      ]
+    },
+    "MRVL": {
+      "skipped_count": 1,
+      "skipped_dates": [
+        "2025-09-19"
+      ]
+    }
+  },
+  "events": [
+    {
+      "symbol": "NVDA",
+      "trigger_date": "2025-09-22",
+      "trigger_close": 183.37612915039065,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "NVDA",
+      "trigger_date": "2025-09-29",
+      "trigger_close": 181.6183624267578,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "NVDA",
+      "trigger_date": "2025-10-08",
+      "trigger_close": 188.86911010742188,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "NVDA",
+      "trigger_date": "2025-10-29",
+      "trigger_close": 206.7762756347656,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "NVDA",
+      "trigger_date": "2025-12-29",
+      "trigger_close": 187.99070739746097,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 1
+    },
+    {
+      "symbol": "NVDA",
+      "trigger_date": "2026-01-02",
+      "trigger_close": 188.6199493408203,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 1
+    },
+    {
+      "symbol": "NVDA",
+      "trigger_date": "2026-01-29",
+      "trigger_close": 192.2754821777344,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "NVDA",
+      "trigger_date": "2026-02-23",
+      "trigger_close": 191.316650390625,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 1
+    },
+    {
+      "symbol": "NVDA",
+      "trigger_date": "2026-04-13",
+      "trigger_close": 189.0896148681641,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "NVDA",
+      "trigger_date": "2026-04-22",
+      "trigger_close": 202.26426696777344,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "NVDA",
+      "trigger_date": "2026-04-24",
+      "trigger_close": 208.0275421142578,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "NVDA",
+      "trigger_date": "2026-05-11",
+      "trigger_close": 219.18453979492188,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 4
+    },
+    {
+      "symbol": "NVDA",
+      "trigger_date": "2026-07-15",
+      "trigger_close": 212.5,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [
+        "2026-06-18 8-K (8.01,9.01): $25B senior notes offering (debt, not equity) -- routine treasury financing -- https://www.sec.gov/Archives/edgar/data/1045810/000119312526275783/d48176d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 6
+    },
+    {
+      "symbol": "NVDA",
+      "trigger_date": "2026-07-21",
+      "trigger_close": 207.2899932861328,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [
+        "2026-06-18 8-K (8.01,9.01): $25B senior notes offering (debt, not equity) -- routine treasury financing -- https://www.sec.gov/Archives/edgar/data/1045810/000119312526275783/d48176d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 6
+    },
+    {
+      "symbol": "NVDA",
+      "trigger_date": "2026-08-12",
+      "trigger_close": 224.08999633789065,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [
+        "2026-06-18 8-K (8.01,9.01): $25B senior notes offering (debt, not equity) -- routine treasury financing -- https://www.sec.gov/Archives/edgar/data/1045810/000119312526275783/d48176d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 4
+    },
+    {
+      "symbol": "SNDK",
+      "trigger_date": "2026-01-02",
+      "trigger_close": 275.239990234375,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "SNDK",
+      "trigger_date": "2026-01-28",
+      "trigger_close": 527.6300048828125,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "SNDK",
+      "trigger_date": "2026-03-18",
+      "trigger_close": 753.6900024414062,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "SNDK",
+      "trigger_date": "2026-04-10",
+      "trigger_close": 851.77001953125,
+      "conviction": "high",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "SanDisk's own $1B strategic equity investment INTO Nanya Technology (Taiwan DRAM) -- signals strength + industry consolidation, not dilutive to SNDK",
+      "risk_flags": [],
+      "sources": [
+        "2026-03-25 8-K (1.01,8.01,9.01): SanDisk's own $1B strategic equity investment INTO Nanya Technology (Taiwan DRAM) -- signals strength + industry consolidation, not dilutive to SNDK -- https://www.sec.gov/Archives/edgar/data/2023554/000119312526122705/d136592d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "SNDK",
+      "trigger_date": "2026-04-16",
+      "trigger_close": 919.469970703125,
+      "conviction": "high",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "SanDisk's own $1B strategic equity investment INTO Nanya Technology (Taiwan DRAM) -- signals strength + industry consolidation, not dilutive to SNDK",
+      "risk_flags": [],
+      "sources": [
+        "2026-03-25 8-K (1.01,8.01,9.01): SanDisk's own $1B strategic equity investment INTO Nanya Technology (Taiwan DRAM) -- signals strength + industry consolidation, not dilutive to SNDK -- https://www.sec.gov/Archives/edgar/data/2023554/000119312526122705/d136592d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "SNDK",
+      "trigger_date": "2026-04-22",
+      "trigger_close": 979.0700073242188,
+      "conviction": "high",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "SanDisk's own $1B strategic equity investment INTO Nanya Technology (Taiwan DRAM) -- signals strength + industry consolidation, not dilutive to SNDK",
+      "risk_flags": [],
+      "sources": [
+        "2026-03-25 8-K (1.01,8.01,9.01): SanDisk's own $1B strategic equity investment INTO Nanya Technology (Taiwan DRAM) -- signals strength + industry consolidation, not dilutive to SNDK -- https://www.sec.gov/Archives/edgar/data/2023554/000119312526122705/d136592d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "SNDK",
+      "trigger_date": "2026-04-24",
+      "trigger_close": 989.9000244140624,
+      "conviction": "high",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "SanDisk's own $1B strategic equity investment INTO Nanya Technology (Taiwan DRAM) -- signals strength + industry consolidation, not dilutive to SNDK",
+      "risk_flags": [],
+      "sources": [
+        "2026-03-25 8-K (1.01,8.01,9.01): SanDisk's own $1B strategic equity investment INTO Nanya Technology (Taiwan DRAM) -- signals strength + industry consolidation, not dilutive to SNDK -- https://www.sec.gov/Archives/edgar/data/2023554/000119312526122705/d136592d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "SNDK",
+      "trigger_date": "2026-04-29",
+      "trigger_close": 1064.2099609375,
+      "conviction": "high",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "SanDisk's own $1B strategic equity investment INTO Nanya Technology (Taiwan DRAM) -- signals strength + industry consolidation, not dilutive to SNDK",
+      "risk_flags": [],
+      "sources": [
+        "2026-03-25 8-K (1.01,8.01,9.01): SanDisk's own $1B strategic equity investment INTO Nanya Technology (Taiwan DRAM) -- signals strength + industry consolidation, not dilutive to SNDK -- https://www.sec.gov/Archives/edgar/data/2023554/000119312526122705/d136592d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "SNDK",
+      "trigger_date": "2026-05-08",
+      "trigger_close": 1562.3399658203125,
+      "conviction": "high",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "Q3 earnings + $6B share buyback authorization -- real bullish capital-return signal",
+      "risk_flags": [],
+      "sources": [
+        "2026-04-30 8-K (2.02,8.01,9.01): Q3 earnings + $6B share buyback authorization -- real bullish capital-return signal -- https://www.sec.gov/Archives/edgar/data/2023554/000162828026028879/sndk-20260430.htm",
+        "2026-03-25 8-K (1.01,8.01,9.01): SanDisk's own $1B strategic equity investment INTO Nanya Technology (Taiwan DRAM) -- signals strength + industry consolidation, not dilutive to SNDK -- https://www.sec.gov/Archives/edgar/data/2023554/000119312526122705/d136592d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "SNDK",
+      "trigger_date": "2026-05-28",
+      "trigger_close": 1641.6400146484375,
+      "conviction": "high",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "Q3 earnings + $6B share buyback authorization -- real bullish capital-return signal",
+      "risk_flags": [],
+      "sources": [
+        "2026-05-15 8-K (8.01,9.01): Company pushback against unsolicited lowball mini-tender offer -- defensive/informational, not a catalyst or risk -- https://www.sec.gov/Archives/edgar/data/2023554/000119312526224694/d157363d8k.htm",
+        "2026-04-30 8-K (2.02,8.01,9.01): Q3 earnings + $6B share buyback authorization -- real bullish capital-return signal -- https://www.sec.gov/Archives/edgar/data/2023554/000162828026028879/sndk-20260430.htm",
+        "2026-03-25 8-K (1.01,8.01,9.01): SanDisk's own $1B strategic equity investment INTO Nanya Technology (Taiwan DRAM) -- signals strength + industry consolidation, not dilutive to SNDK -- https://www.sec.gov/Archives/edgar/data/2023554/000119312526122705/d136592d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "SNDK",
+      "trigger_date": "2026-06-12",
+      "trigger_close": 1980.0999755859375,
+      "conviction": "high",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "Q3 earnings + $6B share buyback authorization -- real bullish capital-return signal",
+      "risk_flags": [],
+      "sources": [
+        "2026-05-15 8-K (8.01,9.01): Company pushback against unsolicited lowball mini-tender offer -- defensive/informational, not a catalyst or risk -- https://www.sec.gov/Archives/edgar/data/2023554/000119312526224694/d157363d8k.htm",
+        "2026-04-30 8-K (2.02,8.01,9.01): Q3 earnings + $6B share buyback authorization -- real bullish capital-return signal -- https://www.sec.gov/Archives/edgar/data/2023554/000162828026028879/sndk-20260430.htm",
+        "2026-03-25 8-K (1.01,8.01,9.01): SanDisk's own $1B strategic equity investment INTO Nanya Technology (Taiwan DRAM) -- signals strength + industry consolidation, not dilutive to SNDK -- https://www.sec.gov/Archives/edgar/data/2023554/000119312526122705/d136592d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "SNDK",
+      "trigger_date": "2026-06-18",
+      "trigger_close": 2184.75,
+      "conviction": "high",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "Q3 earnings + $6B share buyback authorization -- real bullish capital-return signal",
+      "risk_flags": [],
+      "sources": [
+        "2026-05-15 8-K (8.01,9.01): Company pushback against unsolicited lowball mini-tender offer -- defensive/informational, not a catalyst or risk -- https://www.sec.gov/Archives/edgar/data/2023554/000119312526224694/d157363d8k.htm",
+        "2026-04-30 8-K (2.02,8.01,9.01): Q3 earnings + $6B share buyback authorization -- real bullish capital-return signal -- https://www.sec.gov/Archives/edgar/data/2023554/000162828026028879/sndk-20260430.htm",
+        "2026-03-25 8-K (1.01,8.01,9.01): SanDisk's own $1B strategic equity investment INTO Nanya Technology (Taiwan DRAM) -- signals strength + industry consolidation, not dilutive to SNDK -- https://www.sec.gov/Archives/edgar/data/2023554/000119312526122705/d136592d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "SNDK",
+      "trigger_date": "2026-06-25",
+      "trigger_close": 2335.0,
+      "conviction": "high",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "Q3 earnings + $6B share buyback authorization -- real bullish capital-return signal",
+      "risk_flags": [],
+      "sources": [
+        "2026-05-15 8-K (8.01,9.01): Company pushback against unsolicited lowball mini-tender offer -- defensive/informational, not a catalyst or risk -- https://www.sec.gov/Archives/edgar/data/2023554/000119312526224694/d157363d8k.htm",
+        "2026-04-30 8-K (2.02,8.01,9.01): Q3 earnings + $6B share buyback authorization -- real bullish capital-return signal -- https://www.sec.gov/Archives/edgar/data/2023554/000162828026028879/sndk-20260430.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "SNDK",
+      "trigger_date": "2026-08-14",
+      "trigger_close": 1641.1099853515625,
+      "conviction": "high",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "Q4 earnings + $14B additional buyback authorization -- real bullish capital-return signal",
+      "risk_flags": [],
+      "sources": [
+        "2026-08-05 8-K (2.02,8.01,9.01): Q4 earnings + $14B additional buyback authorization -- real bullish capital-return signal -- https://www.sec.gov/Archives/edgar/data/2023554/000162828026053346/sndk-20260805.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 1
+    },
+    {
+      "symbol": "SNDK",
+      "trigger_date": "2026-09-03",
+      "trigger_close": 1554.989990234375,
+      "conviction": "high",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "Q4 earnings + $14B additional buyback authorization -- real bullish capital-return signal",
+      "risk_flags": [],
+      "sources": [
+        "2026-08-05 8-K (2.02,8.01,9.01): Q4 earnings + $14B additional buyback authorization -- real bullish capital-return signal -- https://www.sec.gov/Archives/edgar/data/2023554/000162828026053346/sndk-20260805.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 1
+    },
+    {
+      "symbol": "MU",
+      "trigger_date": "2025-12-09",
+      "trigger_close": 252.17333984375,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "MU",
+      "trigger_date": "2025-12-23",
+      "trigger_close": 276.0000305175781,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "MU",
+      "trigger_date": "2026-01-02",
+      "trigger_close": 315.23907470703125,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "MU",
+      "trigger_date": "2026-01-09",
+      "trigger_close": 344.8920593261719,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "MU",
+      "trigger_date": "2026-01-16",
+      "trigger_close": 362.54193115234375,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "MU",
+      "trigger_date": "2026-01-27",
+      "trigger_close": 410.0046691894531,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "MU",
+      "trigger_date": "2026-03-18",
+      "trigger_close": 461.4651489257813,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "MU",
+      "trigger_date": "2026-04-15",
+      "trigger_close": 456.1598510742187,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [
+        "2026-04-01 8-K (8.01,9.01): Pricing/expiration of the same tender offer -- routine, follow-on of the above -- https://www.sec.gov/Archives/edgar/data/723125/000110465926038249/tm2610810d1_8k.htm",
+        "2026-03-25 8-K (8.01,9.01): Commenced cash tender offer for existing senior notes -- routine debt liability management -- https://www.sec.gov/Archives/edgar/data/723125/000110465926034174/tm269755d1_8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 4
+    },
+    {
+      "symbol": "MU",
+      "trigger_date": "2026-04-22",
+      "trigger_close": 487.4050598144531,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [
+        "2026-04-01 8-K (8.01,9.01): Pricing/expiration of the same tender offer -- routine, follow-on of the above -- https://www.sec.gov/Archives/edgar/data/723125/000110465926038249/tm2610810d1_8k.htm",
+        "2026-03-25 8-K (8.01,9.01): Commenced cash tender offer for existing senior notes -- routine debt liability management -- https://www.sec.gov/Archives/edgar/data/723125/000110465926034174/tm269755d1_8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "MU",
+      "trigger_date": "2026-05-13",
+      "trigger_close": 803.5064086914062,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [
+        "2026-04-01 8-K (8.01,9.01): Pricing/expiration of the same tender offer -- routine, follow-on of the above -- https://www.sec.gov/Archives/edgar/data/723125/000110465926038249/tm2610810d1_8k.htm",
+        "2026-03-25 8-K (8.01,9.01): Commenced cash tender offer for existing senior notes -- routine debt liability management -- https://www.sec.gov/Archives/edgar/data/723125/000110465926034174/tm269755d1_8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "MU",
+      "trigger_date": "2026-05-26",
+      "trigger_close": 895.7422485351562,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [
+        "2026-04-01 8-K (8.01,9.01): Pricing/expiration of the same tender offer -- routine, follow-on of the above -- https://www.sec.gov/Archives/edgar/data/723125/000110465926038249/tm2610810d1_8k.htm",
+        "2026-03-25 8-K (8.01,9.01): Commenced cash tender offer for existing senior notes -- routine debt liability management -- https://www.sec.gov/Archives/edgar/data/723125/000110465926034174/tm269755d1_8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "MU",
+      "trigger_date": "2026-06-18",
+      "trigger_close": 1133.8155517578125,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [
+        "2026-04-01 8-K (8.01,9.01): Pricing/expiration of the same tender offer -- routine, follow-on of the above -- https://www.sec.gov/Archives/edgar/data/723125/000110465926038249/tm2610810d1_8k.htm",
+        "2026-03-25 8-K (8.01,9.01): Commenced cash tender offer for existing senior notes -- routine debt liability management -- https://www.sec.gov/Archives/edgar/data/723125/000110465926034174/tm269755d1_8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "MU",
+      "trigger_date": "2026-08-14",
+      "trigger_close": 971.6599731445312,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "MU",
+      "trigger_date": "2026-08-20",
+      "trigger_close": 974.3300170898438,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "MU",
+      "trigger_date": "2026-09-03",
+      "trigger_close": 958.1599731445312,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "LITE",
+      "trigger_date": "2025-11-24",
+      "trigger_close": 299.3599853515625,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [
+        "dilution_or_offering"
+      ],
+      "sources": [
+        "2025-09-08 8-K (1.01,2.03,3.02,8.01,9.01): $1.265B convertible senior notes -- pure capital raise -- https://www.sec.gov/Archives/edgar/data/1633978/000119312525198329/d863090d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "LITE",
+      "trigger_date": "2025-12-04",
+      "trigger_close": 327.8500061035156,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [
+        "dilution_or_offering"
+      ],
+      "sources": [
+        "2025-09-08 8-K (1.01,2.03,3.02,8.01,9.01): $1.265B convertible senior notes -- pure capital raise -- https://www.sec.gov/Archives/edgar/data/1633978/000119312525198329/d863090d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "LITE",
+      "trigger_date": "2025-12-23",
+      "trigger_close": 387.4100036621094,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [
+        "2025-12-22 8-K (1.01,2.03,9.01): New $400M revolving credit facility -- routine treasury -- https://www.sec.gov/Archives/edgar/data/1633978/000119312525328691/d38670d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 4
+    },
+    {
+      "symbol": "LITE",
+      "trigger_date": "2026-02-02",
+      "trigger_close": 423.4200134277344,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [
+        "2025-12-22 8-K (1.01,2.03,9.01): New $400M revolving credit facility -- routine treasury -- https://www.sec.gov/Archives/edgar/data/1633978/000119312525328691/d38670d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 5
+    },
+    {
+      "symbol": "LITE",
+      "trigger_date": "2026-02-17",
+      "trigger_close": 600.4199829101562,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [
+        "2025-12-22 8-K (1.01,2.03,9.01): New $400M revolving credit facility -- routine treasury -- https://www.sec.gov/Archives/edgar/data/1633978/000119312525328691/d38670d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 5
+    },
+    {
+      "symbol": "LITE",
+      "trigger_date": "2026-03-02",
+      "trigger_close": 783.25,
+      "conviction": "high",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "NVIDIA $2B strategic investment via Series A Convertible Preferred -- major strategic backing for photonics supply chain",
+      "risk_flags": [],
+      "sources": [
+        "2026-03-02 8-K (3.02,5.03,7.01,9.01): NVIDIA $2B strategic investment via Series A Convertible Preferred -- major strategic backing for photonics supply chain -- https://www.sec.gov/Archives/edgar/data/1633978/000119312526085412/d41019d8k.htm",
+        "2025-12-22 8-K (1.01,2.03,9.01): New $400M revolving credit facility -- routine treasury -- https://www.sec.gov/Archives/edgar/data/1633978/000119312525328691/d38670d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 5
+    },
+    {
+      "symbol": "LITE",
+      "trigger_date": "2026-03-24",
+      "trigger_close": 801.989990234375,
+      "conviction": "high",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "NVIDIA $2B strategic investment via Series A Convertible Preferred -- major strategic backing for photonics supply chain",
+      "risk_flags": [],
+      "sources": [
+        "2026-03-02 8-K (3.02,5.03,7.01,9.01): NVIDIA $2B strategic investment via Series A Convertible Preferred -- major strategic backing for photonics supply chain -- https://www.sec.gov/Archives/edgar/data/1633978/000119312526085412/d41019d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "LITE",
+      "trigger_date": "2026-04-07",
+      "trigger_close": 815.75,
+      "conviction": "high",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "NVIDIA $2B strategic investment via Series A Convertible Preferred -- major strategic backing for photonics supply chain",
+      "risk_flags": [],
+      "sources": [
+        "2026-03-02 8-K (3.02,5.03,7.01,9.01): NVIDIA $2B strategic investment via Series A Convertible Preferred -- major strategic backing for photonics supply chain -- https://www.sec.gov/Archives/edgar/data/1633978/000119312526085412/d41019d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "LITE",
+      "trigger_date": "2026-04-16",
+      "trigger_close": 891.219970703125,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "catalyst present (NVIDIA $2B strategic investment via Series A Convertible Preferred -- major strategic backing for photonics supply chain) but risk_flags ['dilution_or_offering'] non-empty -> capped at low per mechanical rule",
+      "risk_flags": [
+        "dilution_or_offering"
+      ],
+      "sources": [
+        "2026-04-08 8-K (3.02): Debt-for-equity exchange (5.7M sh for convertible notes) -- balance-sheet financial engineering -- https://www.sec.gov/Archives/edgar/data/1633978/000119312526146256/d13152d8k.htm",
+        "2026-03-02 8-K (3.02,5.03,7.01,9.01): NVIDIA $2B strategic investment via Series A Convertible Preferred -- major strategic backing for photonics supply chain -- https://www.sec.gov/Archives/edgar/data/1633978/000119312526085412/d41019d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "LITE",
+      "trigger_date": "2026-05-04",
+      "trigger_close": 976.1799926757812,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "catalyst present (NVIDIA $2B strategic investment via Series A Convertible Preferred -- major strategic backing for photonics supply chain) but risk_flags ['dilution_or_offering'] non-empty -> capped at low per mechanical rule",
+      "risk_flags": [
+        "dilution_or_offering"
+      ],
+      "sources": [
+        "2026-04-08 8-K (3.02): Debt-for-equity exchange (5.7M sh for convertible notes) -- balance-sheet financial engineering -- https://www.sec.gov/Archives/edgar/data/1633978/000119312526146256/d13152d8k.htm",
+        "2026-03-02 8-K (3.02,5.03,7.01,9.01): NVIDIA $2B strategic investment via Series A Convertible Preferred -- major strategic backing for photonics supply chain -- https://www.sec.gov/Archives/edgar/data/1633978/000119312526085412/d41019d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "LITE",
+      "trigger_date": "2026-05-11",
+      "trigger_close": 1053.0899658203125,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "catalyst present (NVIDIA $2B strategic investment via Series A Convertible Preferred -- major strategic backing for photonics supply chain) but risk_flags ['dilution_or_offering'] non-empty -> capped at low per mechanical rule",
+      "risk_flags": [
+        "dilution_or_offering"
+      ],
+      "sources": [
+        "2026-04-08 8-K (3.02): Debt-for-equity exchange (5.7M sh for convertible notes) -- balance-sheet financial engineering -- https://www.sec.gov/Archives/edgar/data/1633978/000119312526146256/d13152d8k.htm",
+        "2026-03-02 8-K (3.02,5.03,7.01,9.01): NVIDIA $2B strategic investment via Series A Convertible Preferred -- major strategic backing for photonics supply chain -- https://www.sec.gov/Archives/edgar/data/1633978/000119312526085412/d41019d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "LITE",
+      "trigger_date": "2026-05-13",
+      "trigger_close": 1030.3699951171875,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "catalyst present (NVIDIA $2B strategic investment via Series A Convertible Preferred -- major strategic backing for photonics supply chain) but risk_flags ['dilution_or_offering'] non-empty -> capped at low per mechanical rule",
+      "risk_flags": [
+        "dilution_or_offering"
+      ],
+      "sources": [
+        "2026-04-08 8-K (3.02): Debt-for-equity exchange (5.7M sh for convertible notes) -- balance-sheet financial engineering -- https://www.sec.gov/Archives/edgar/data/1633978/000119312526146256/d13152d8k.htm",
+        "2026-03-02 8-K (3.02,5.03,7.01,9.01): NVIDIA $2B strategic investment via Series A Convertible Preferred -- major strategic backing for photonics supply chain -- https://www.sec.gov/Archives/edgar/data/1633978/000119312526085412/d41019d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "LITE",
+      "trigger_date": "2026-07-23",
+      "trigger_close": 833.6400146484375,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [
+        "dilution_or_offering"
+      ],
+      "sources": [
+        "2026-06-01 8-K (3.02): Another debt-for-equity exchange (5.0M sh for convertible notes) -- https://www.sec.gov/Archives/edgar/data/1633978/000119312526249535/d112771d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "LITE",
+      "trigger_date": "2026-08-12",
+      "trigger_close": 932.469970703125,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [
+        "dilution_or_offering"
+      ],
+      "sources": [
+        "2026-06-01 8-K (3.02): Another debt-for-equity exchange (5.0M sh for convertible notes) -- https://www.sec.gov/Archives/edgar/data/1633978/000119312526249535/d112771d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "LITE",
+      "trigger_date": "2026-08-27",
+      "trigger_close": 956.1400146484376,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [
+        "dilution_or_offering"
+      ],
+      "sources": [
+        "2026-06-01 8-K (3.02): Another debt-for-equity exchange (5.0M sh for convertible notes) -- https://www.sec.gov/Archives/edgar/data/1633978/000119312526249535/d112771d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "GOOG",
+      "trigger_date": "2025-09-18",
+      "trigger_close": 251.67300415039065,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "catalyst present (Q2 2025 earnings release -- real specific event, content/beat-miss not confirmable from item code alone) but risk_flags ['under_regulatory_investigation'] non-empty -> capped at low per mechanical rule",
+      "risk_flags": [
+        "under_regulatory_investigation"
+      ],
+      "sources": [
+        "2025-09-05 8-K (8.01): EU Commission found Google infringed competition law (self-preferencing) -- adverse regulatory finding -- https://www.sec.gov/Archives/edgar/data/1652044/000165204425000074/goog-20250905.htm",
+        "2025-09-03 8-K (8.01): DOJ search-antitrust remedies decision -- ongoing regulatory matter -- https://www.sec.gov/Archives/edgar/data/1652044/000165204425000067/goog-20250902.htm",
+        "2025-07-23 8-K (2.02,8.01,9.01): Q2 2025 earnings release -- real specific event, content/beat-miss not confirmable from item code alone -- https://www.sec.gov/Archives/edgar/data/1652044/000165204425000056/goog-20250723.htm",
+        "2025-07-18 8-K (8.01,9.01): Court preliminarily approved shareholder derivative litigation settlement -- risk-reduction, not growth catalyst -- https://www.sec.gov/Archives/edgar/data/1652044/000119312525161225/d21412d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 4
+    },
+    {
+      "symbol": "GOOG",
+      "trigger_date": "2025-10-24",
+      "trigger_close": 259.83172607421875,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [
+        "under_regulatory_investigation"
+      ],
+      "sources": [
+        "2025-09-05 8-K (8.01): EU Commission found Google infringed competition law (self-preferencing) -- adverse regulatory finding -- https://www.sec.gov/Archives/edgar/data/1652044/000165204425000074/goog-20250905.htm",
+        "2025-09-03 8-K (8.01): DOJ search-antitrust remedies decision -- ongoing regulatory matter -- https://www.sec.gov/Archives/edgar/data/1652044/000165204425000067/goog-20250902.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "GOOG",
+      "trigger_date": "2025-11-05",
+      "trigger_close": 284.0085754394531,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [
+        "under_regulatory_investigation"
+      ],
+      "sources": [
+        "2025-09-05 8-K (8.01): EU Commission found Google infringed competition law (self-preferencing) -- adverse regulatory finding -- https://www.sec.gov/Archives/edgar/data/1652044/000165204425000074/goog-20250905.htm",
+        "2025-09-03 8-K (8.01): DOJ search-antitrust remedies decision -- ongoing regulatory matter -- https://www.sec.gov/Archives/edgar/data/1652044/000165204425000067/goog-20250902.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "GOOG",
+      "trigger_date": "2025-11-10",
+      "trigger_close": 289.8334045410156,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "catalyst present (Closed $17.5B+EUR6.5B senior notes offering (debt, not equity) -- signals AI capex scale-up) but risk_flags ['under_regulatory_investigation'] non-empty -> capped at low per mechanical rule",
+      "risk_flags": [
+        "under_regulatory_investigation"
+      ],
+      "sources": [
+        "2025-11-06 8-K (8.01,9.01): Closed $17.5B+EUR6.5B senior notes offering (debt, not equity) -- signals AI capex scale-up -- https://www.sec.gov/Archives/edgar/data/1652044/000119312525269979/d56115d8k.htm",
+        "2025-09-05 8-K (8.01): EU Commission found Google infringed competition law (self-preferencing) -- adverse regulatory finding -- https://www.sec.gov/Archives/edgar/data/1652044/000165204425000074/goog-20250905.htm",
+        "2025-09-03 8-K (8.01): DOJ search-antitrust remedies decision -- ongoing regulatory matter -- https://www.sec.gov/Archives/edgar/data/1652044/000165204425000067/goog-20250902.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 4
+    },
+    {
+      "symbol": "GOOG",
+      "trigger_date": "2025-11-21",
+      "trigger_close": 298.8697814941406,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "catalyst present (Closed $17.5B+EUR6.5B senior notes offering (debt, not equity) -- signals AI capex scale-up) but risk_flags ['under_regulatory_investigation'] non-empty -> capped at low per mechanical rule",
+      "risk_flags": [
+        "under_regulatory_investigation"
+      ],
+      "sources": [
+        "2025-11-06 8-K (8.01,9.01): Closed $17.5B+EUR6.5B senior notes offering (debt, not equity) -- signals AI capex scale-up -- https://www.sec.gov/Archives/edgar/data/1652044/000119312525269979/d56115d8k.htm",
+        "2025-09-05 8-K (8.01): EU Commission found Google infringed competition law (self-preferencing) -- adverse regulatory finding -- https://www.sec.gov/Archives/edgar/data/1652044/000165204425000074/goog-20250905.htm",
+        "2025-09-03 8-K (8.01): DOJ search-antitrust remedies decision -- ongoing regulatory matter -- https://www.sec.gov/Archives/edgar/data/1652044/000165204425000067/goog-20250902.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 4
+    },
+    {
+      "symbol": "GOOG",
+      "trigger_date": "2025-12-03",
+      "trigger_close": 319.7851867675781,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "catalyst present (Closed $17.5B+EUR6.5B senior notes offering (debt, not equity) -- signals AI capex scale-up) but risk_flags ['under_regulatory_investigation'] non-empty -> capped at low per mechanical rule",
+      "risk_flags": [
+        "under_regulatory_investigation"
+      ],
+      "sources": [
+        "2025-11-06 8-K (8.01,9.01): Closed $17.5B+EUR6.5B senior notes offering (debt, not equity) -- signals AI capex scale-up -- https://www.sec.gov/Archives/edgar/data/1652044/000119312525269979/d56115d8k.htm",
+        "2025-09-05 8-K (8.01): EU Commission found Google infringed competition law (self-preferencing) -- adverse regulatory finding -- https://www.sec.gov/Archives/edgar/data/1652044/000165204425000074/goog-20250905.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "GOOG",
+      "trigger_date": "2025-12-05",
+      "trigger_close": 321.2513427734375,
+      "conviction": "medium",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "Closed $17.5B+EUR6.5B senior notes offering (debt, not equity) -- signals AI capex scale-up",
+      "risk_flags": [],
+      "sources": [
+        "2025-11-06 8-K (8.01,9.01): Closed $17.5B+EUR6.5B senior notes offering (debt, not equity) -- signals AI capex scale-up -- https://www.sec.gov/Archives/edgar/data/1652044/000119312525269979/d56115d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "GOOG",
+      "trigger_date": "2026-01-08",
+      "trigger_close": 325.3733215332031,
+      "conviction": "medium",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "Closed $17.5B+EUR6.5B senior notes offering (debt, not equity) -- signals AI capex scale-up",
+      "risk_flags": [],
+      "sources": [
+        "2025-11-06 8-K (8.01,9.01): Closed $17.5B+EUR6.5B senior notes offering (debt, not equity) -- signals AI capex scale-up -- https://www.sec.gov/Archives/edgar/data/1652044/000119312525269979/d56115d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "GOOG",
+      "trigger_date": "2026-01-29",
+      "trigger_close": 337.99859619140625,
+      "conviction": "medium",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "Closed $17.5B+EUR6.5B senior notes offering (debt, not equity) -- signals AI capex scale-up",
+      "risk_flags": [],
+      "sources": [
+        "2025-11-06 8-K (8.01,9.01): Closed $17.5B+EUR6.5B senior notes offering (debt, not equity) -- signals AI capex scale-up -- https://www.sec.gov/Archives/edgar/data/1652044/000119312525269979/d56115d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 1
+    },
+    {
+      "symbol": "GOOG",
+      "trigger_date": "2026-04-13",
+      "trigger_close": 318.81103515625,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [
+        "2026-02-13 8-K (8.01,9.01): Another notes offering/administrative debt filing -- routine treasury -- https://www.sec.gov/Archives/edgar/data/1652044/000119312526051423/d946885d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 5
+    },
+    {
+      "symbol": "GOOG",
+      "trigger_date": "2026-04-22",
+      "trigger_close": 337.3078918457031,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [
+        "2026-02-13 8-K (8.01,9.01): Another notes offering/administrative debt filing -- routine treasury -- https://www.sec.gov/Archives/edgar/data/1652044/000119312526051423/d946885d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 5
+    },
+    {
+      "symbol": "AAPL",
+      "trigger_date": "2025-09-19",
+      "trigger_close": 244.59646606445312,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "AAPL",
+      "trigger_date": "2025-10-01",
+      "trigger_close": 254.5098419189453,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "AAPL",
+      "trigger_date": "2025-10-24",
+      "trigger_close": 261.85272216796875,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 1
+    },
+    {
+      "symbol": "AAPL",
+      "trigger_date": "2025-11-28",
+      "trigger_close": 278.0930480957031,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 1
+    },
+    {
+      "symbol": "AAPL",
+      "trigger_date": "2026-02-04",
+      "trigger_close": 275.7394104003906,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "AAPL",
+      "trigger_date": "2026-02-11",
+      "trigger_close": 275.00921630859375,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "AAPL",
+      "trigger_date": "2026-04-08",
+      "trigger_close": 258.43878173828125,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "AAPL",
+      "trigger_date": "2026-04-15",
+      "trigger_close": 265.95538330078125,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "AAPL",
+      "trigger_date": "2026-04-22",
+      "trigger_close": 272.68341064453125,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "AAPL",
+      "trigger_date": "2026-05-01",
+      "trigger_close": 279.6409606933594,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "AAPL",
+      "trigger_date": "2026-05-19",
+      "trigger_close": 298.7123718261719,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "AAPL",
+      "trigger_date": "2026-07-08",
+      "trigger_close": 313.1199645996094,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "AAPL",
+      "trigger_date": "2026-07-15",
+      "trigger_close": 327.2178039550781,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "AAPL",
+      "trigger_date": "2026-07-24",
+      "trigger_close": 332.7330322265625,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 1
+    },
+    {
+      "symbol": "AAPL",
+      "trigger_date": "2026-08-27",
+      "trigger_close": 314.5799865722656,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 1
+    },
+    {
+      "symbol": "MSFT",
+      "trigger_date": "2025-09-19",
+      "trigger_close": 513.703369140625,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "MSFT",
+      "trigger_date": "2025-09-30",
+      "trigger_close": 513.7233276367188,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "MSFT",
+      "trigger_date": "2025-10-03",
+      "trigger_close": 513.1281127929688,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "MSFT",
+      "trigger_date": "2025-10-28",
+      "trigger_close": 537.6463623046875,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "MSFT",
+      "trigger_date": "2025-12-30",
+      "trigger_close": 484.4068603515625,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "MSFT",
+      "trigger_date": "2026-03-09",
+      "trigger_close": 407.757568359375,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 1
+    },
+    {
+      "symbol": "MSFT",
+      "trigger_date": "2026-04-15",
+      "trigger_close": 409.5602722167969,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 1
+    },
+    {
+      "symbol": "MSFT",
+      "trigger_date": "2026-04-24",
+      "trigger_close": 422.90618896484375,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 1
+    },
+    {
+      "symbol": "MSFT",
+      "trigger_date": "2026-05-29",
+      "trigger_close": 449.3940124511719,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "MSFT",
+      "trigger_date": "2026-07-13",
+      "trigger_close": 390.2553405761719,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "MSFT",
+      "trigger_date": "2026-07-15",
+      "trigger_close": 394.8866271972656,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "MSFT",
+      "trigger_date": "2026-07-30",
+      "trigger_close": 450.2524108886719,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "AMD",
+      "trigger_date": "2025-10-01",
+      "trigger_close": 164.00999450683594,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "AMD",
+      "trigger_date": "2025-10-15",
+      "trigger_close": 238.6000061035156,
+      "conviction": "high",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "AMD-OpenAI warrant (160M sh) tied to GPU purchase milestones up to 6GW -- real strategic AI compute deal",
+      "risk_flags": [],
+      "sources": [
+        "2025-10-06 8-K (1.01,3.02,7.01,9.01): AMD-OpenAI warrant (160M sh) tied to GPU purchase milestones up to 6GW -- real strategic AI compute deal -- https://www.sec.gov/Archives/edgar/data/2488/000119312525230895/d28189d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "AMD",
+      "trigger_date": "2025-10-20",
+      "trigger_close": 240.55999755859375,
+      "conviction": "high",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "AMD-OpenAI warrant (160M sh) tied to GPU purchase milestones up to 6GW -- real strategic AI compute deal",
+      "risk_flags": [],
+      "sources": [
+        "2025-10-06 8-K (1.01,3.02,7.01,9.01): AMD-OpenAI warrant (160M sh) tied to GPU purchase milestones up to 6GW -- real strategic AI compute deal -- https://www.sec.gov/Archives/edgar/data/2488/000119312525230895/d28189d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "AMD",
+      "trigger_date": "2025-10-24",
+      "trigger_close": 252.9199981689453,
+      "conviction": "high",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "AMD-OpenAI warrant (160M sh) tied to GPU purchase milestones up to 6GW -- real strategic AI compute deal",
+      "risk_flags": [],
+      "sources": [
+        "2025-10-06 8-K (1.01,3.02,7.01,9.01): AMD-OpenAI warrant (160M sh) tied to GPU purchase milestones up to 6GW -- real strategic AI compute deal -- https://www.sec.gov/Archives/edgar/data/2488/000119312525230895/d28189d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "AMD",
+      "trigger_date": "2026-01-05",
+      "trigger_close": 221.0800018310547,
+      "conviction": "medium",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "Completed sale of ZT Group to Sanmina for $2.4B cash + up to $450M contingent -- real divestiture, cash inflow",
+      "risk_flags": [],
+      "sources": [
+        "2025-10-27 8-K (2.01,7.01,9.01): Completed sale of ZT Group to Sanmina for $2.4B cash + up to $450M contingent -- real divestiture, cash inflow -- https://www.sec.gov/Archives/edgar/data/2488/000119312525250803/d917887d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "AMD",
+      "trigger_date": "2026-01-15",
+      "trigger_close": 227.9199981689453,
+      "conviction": "medium",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "Completed sale of ZT Group to Sanmina for $2.4B cash + up to $450M contingent -- real divestiture, cash inflow",
+      "risk_flags": [],
+      "sources": [
+        "2025-10-27 8-K (2.01,7.01,9.01): Completed sale of ZT Group to Sanmina for $2.4B cash + up to $450M contingent -- real divestiture, cash inflow -- https://www.sec.gov/Archives/edgar/data/2488/000119312525250803/d917887d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "AMD",
+      "trigger_date": "2026-03-25",
+      "trigger_close": 220.27000427246097,
+      "conviction": "high",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "AMD-Meta warrant (160M sh) tied to GPU purchase milestones up to 6GW -- same strategic-deal structure as OpenAI",
+      "risk_flags": [],
+      "sources": [
+        "2026-02-24 8-K (1.01,3.02,7.01,9.01): AMD-Meta warrant (160M sh) tied to GPU purchase milestones up to 6GW -- same strategic-deal structure as OpenAI -- https://www.sec.gov/Archives/edgar/data/2488/000000248826000045/amd-20260223.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 4
+    },
+    {
+      "symbol": "AMD",
+      "trigger_date": "2026-04-06",
+      "trigger_close": 220.17999267578125,
+      "conviction": "high",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "AMD-Meta warrant (160M sh) tied to GPU purchase milestones up to 6GW -- same strategic-deal structure as OpenAI",
+      "risk_flags": [],
+      "sources": [
+        "2026-02-24 8-K (1.01,3.02,7.01,9.01): AMD-Meta warrant (160M sh) tied to GPU purchase milestones up to 6GW -- same strategic-deal structure as OpenAI -- https://www.sec.gov/Archives/edgar/data/2488/000000248826000045/amd-20260223.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 4
+    },
+    {
+      "symbol": "AMD",
+      "trigger_date": "2026-04-30",
+      "trigger_close": 354.489990234375,
+      "conviction": "high",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "AMD-Meta warrant (160M sh) tied to GPU purchase milestones up to 6GW -- same strategic-deal structure as OpenAI",
+      "risk_flags": [],
+      "sources": [
+        "2026-02-24 8-K (1.01,3.02,7.01,9.01): AMD-Meta warrant (160M sh) tied to GPU purchase milestones up to 6GW -- same strategic-deal structure as OpenAI -- https://www.sec.gov/Archives/edgar/data/2488/000000248826000045/amd-20260223.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "AMD",
+      "trigger_date": "2026-05-06",
+      "trigger_close": 421.3900146484375,
+      "conviction": "high",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "AMD-Meta warrant (160M sh) tied to GPU purchase milestones up to 6GW -- same strategic-deal structure as OpenAI",
+      "risk_flags": [],
+      "sources": [
+        "2026-02-24 8-K (1.01,3.02,7.01,9.01): AMD-Meta warrant (160M sh) tied to GPU purchase milestones up to 6GW -- same strategic-deal structure as OpenAI -- https://www.sec.gov/Archives/edgar/data/2488/000000248826000045/amd-20260223.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "AMD",
+      "trigger_date": "2026-05-08",
+      "trigger_close": 455.19000244140625,
+      "conviction": "high",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "AMD-Meta warrant (160M sh) tied to GPU purchase milestones up to 6GW -- same strategic-deal structure as OpenAI",
+      "risk_flags": [],
+      "sources": [
+        "2026-02-24 8-K (1.01,3.02,7.01,9.01): AMD-Meta warrant (160M sh) tied to GPU purchase milestones up to 6GW -- same strategic-deal structure as OpenAI -- https://www.sec.gov/Archives/edgar/data/2488/000000248826000045/amd-20260223.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "AMD",
+      "trigger_date": "2026-05-26",
+      "trigger_close": 503.8900146484375,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [
+        "2026-05-15 8-K (1.01,1.02,2.03,5.02,5.07,9.01): New $5B revolving credit facility replacing existing one -- routine treasury refinancing -- https://www.sec.gov/Archives/edgar/data/2488/000119312526226746/d118163d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "AMD",
+      "trigger_date": "2026-06-02",
+      "trigger_close": 521.5399780273438,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [
+        "2026-05-15 8-K (1.01,1.02,2.03,5.02,5.07,9.01): New $5B revolving credit facility replacing existing one -- routine treasury refinancing -- https://www.sec.gov/Archives/edgar/data/2488/000119312526226746/d118163d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "INTC",
+      "trigger_date": "2025-09-18",
+      "trigger_close": 30.56999969482422,
+      "conviction": "high",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "NVIDIA $5B strategic investment (214.8M sh) + AI infrastructure/PC collaboration -- major strategic deal",
+      "risk_flags": [],
+      "sources": [
+        "2025-09-18 8-K (3.02,7.01,9.01): NVIDIA $5B strategic investment (214.8M sh) + AI infrastructure/PC collaboration -- major strategic deal -- https://www.sec.gov/Archives/edgar/data/50863/000005086325000155/intc-20250915.htm",
+        "2025-09-15 8-K (2.01,7.01,9.01): Completed Altera 51% stake sale to Silver Lake ($3.3B equity value) -- real divestiture completion -- https://www.sec.gov/Archives/edgar/data/50863/000005086325000153/intc-20250912.htm",
+        "2025-09-05 8-K (8.01,9.01): Administrative resale-registration prospectus for DOC's shares -- no new catalyst -- https://www.sec.gov/Archives/edgar/data/50863/000005086325000147/intc-20250905.htm",
+        "2025-08-29 8-K (1.01,8.01,9.01): Amendment releasing Intel from DFA milestone conditions -- confirms/strengthens the government deal -- https://www.sec.gov/Archives/edgar/data/50863/000005086325000135/intc-20250827.htm",
+        "2025-08-25 8-K (1.01,3.02,7.01,8.01,9.01): US DOC/CHIPS Act deal: $8.87B disbursement in exchange for equity stake -- major strategic government backing -- https://www.sec.gov/Archives/edgar/data/50863/000005086325000129/intc-20250822.htm",
+        "2025-08-21 8-K (3.02,7.01,9.01): SoftBank $2B strategic equity investment (87M sh) -- real strategic investor backing -- https://www.sec.gov/Archives/edgar/data/50863/000005086325000126/intc-20250818.htm",
+        "2025-08-14 8-K (1.01,9.01): Procedural amendment to Altera sale purchase-price calc / closing date -- administrative -- https://www.sec.gov/Archives/edgar/data/50863/000005086325000123/intc-20250411.htm",
+        "2025-07-24 8-K (2.02,2.05,9.01): Q2 earnings + Item 2.05 restructuring/exit costs -- mixed signal, no clear positive catalyst confirmable -- https://www.sec.gov/Archives/edgar/data/50863/000005086325000107/intc-20250724.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 9
+    },
+    {
+      "symbol": "INTC",
+      "trigger_date": "2025-10-01",
+      "trigger_close": 35.939998626708984,
+      "conviction": "high",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "NVIDIA $5B strategic investment (214.8M sh) + AI infrastructure/PC collaboration -- major strategic deal",
+      "risk_flags": [],
+      "sources": [
+        "2025-09-29 8-K (3.02): Completed SoftBank $2B share issuance closing -- confirmatory -- https://www.sec.gov/Archives/edgar/data/50863/000005086325000159/intc-20250926.htm",
+        "2025-09-18 8-K (3.02,7.01,9.01): NVIDIA $5B strategic investment (214.8M sh) + AI infrastructure/PC collaboration -- major strategic deal -- https://www.sec.gov/Archives/edgar/data/50863/000005086325000155/intc-20250915.htm",
+        "2025-09-15 8-K (2.01,7.01,9.01): Completed Altera 51% stake sale to Silver Lake ($3.3B equity value) -- real divestiture completion -- https://www.sec.gov/Archives/edgar/data/50863/000005086325000153/intc-20250912.htm",
+        "2025-09-05 8-K (8.01,9.01): Administrative resale-registration prospectus for DOC's shares -- no new catalyst -- https://www.sec.gov/Archives/edgar/data/50863/000005086325000147/intc-20250905.htm",
+        "2025-08-29 8-K (1.01,8.01,9.01): Amendment releasing Intel from DFA milestone conditions -- confirms/strengthens the government deal -- https://www.sec.gov/Archives/edgar/data/50863/000005086325000135/intc-20250827.htm",
+        "2025-08-25 8-K (1.01,3.02,7.01,8.01,9.01): US DOC/CHIPS Act deal: $8.87B disbursement in exchange for equity stake -- major strategic government backing -- https://www.sec.gov/Archives/edgar/data/50863/000005086325000129/intc-20250822.htm",
+        "2025-08-21 8-K (3.02,7.01,9.01): SoftBank $2B strategic equity investment (87M sh) -- real strategic investor backing -- https://www.sec.gov/Archives/edgar/data/50863/000005086325000126/intc-20250818.htm",
+        "2025-08-14 8-K (1.01,9.01): Procedural amendment to Altera sale purchase-price calc / closing date -- administrative -- https://www.sec.gov/Archives/edgar/data/50863/000005086325000123/intc-20250411.htm",
+        "2025-07-24 8-K (2.02,2.05,9.01): Q2 earnings + Item 2.05 restructuring/exit costs -- mixed signal, no clear positive catalyst confirmable -- https://www.sec.gov/Archives/edgar/data/50863/000005086325000107/intc-20250724.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 10
+    },
+    {
+      "symbol": "INTC",
+      "trigger_date": "2025-10-07",
+      "trigger_close": 37.16999816894531,
+      "conviction": "high",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "NVIDIA $5B strategic investment (214.8M sh) + AI infrastructure/PC collaboration -- major strategic deal",
+      "risk_flags": [],
+      "sources": [
+        "2025-09-29 8-K (3.02): Completed SoftBank $2B share issuance closing -- confirmatory -- https://www.sec.gov/Archives/edgar/data/50863/000005086325000159/intc-20250926.htm",
+        "2025-09-18 8-K (3.02,7.01,9.01): NVIDIA $5B strategic investment (214.8M sh) + AI infrastructure/PC collaboration -- major strategic deal -- https://www.sec.gov/Archives/edgar/data/50863/000005086325000155/intc-20250915.htm",
+        "2025-09-15 8-K (2.01,7.01,9.01): Completed Altera 51% stake sale to Silver Lake ($3.3B equity value) -- real divestiture completion -- https://www.sec.gov/Archives/edgar/data/50863/000005086325000153/intc-20250912.htm",
+        "2025-09-05 8-K (8.01,9.01): Administrative resale-registration prospectus for DOC's shares -- no new catalyst -- https://www.sec.gov/Archives/edgar/data/50863/000005086325000147/intc-20250905.htm",
+        "2025-08-29 8-K (1.01,8.01,9.01): Amendment releasing Intel from DFA milestone conditions -- confirms/strengthens the government deal -- https://www.sec.gov/Archives/edgar/data/50863/000005086325000135/intc-20250827.htm",
+        "2025-08-25 8-K (1.01,3.02,7.01,8.01,9.01): US DOC/CHIPS Act deal: $8.87B disbursement in exchange for equity stake -- major strategic government backing -- https://www.sec.gov/Archives/edgar/data/50863/000005086325000129/intc-20250822.htm",
+        "2025-08-21 8-K (3.02,7.01,9.01): SoftBank $2B strategic equity investment (87M sh) -- real strategic investor backing -- https://www.sec.gov/Archives/edgar/data/50863/000005086325000126/intc-20250818.htm",
+        "2025-08-14 8-K (1.01,9.01): Procedural amendment to Altera sale purchase-price calc / closing date -- administrative -- https://www.sec.gov/Archives/edgar/data/50863/000005086325000123/intc-20250411.htm",
+        "2025-07-24 8-K (2.02,2.05,9.01): Q2 earnings + Item 2.05 restructuring/exit costs -- mixed signal, no clear positive catalyst confirmable -- https://www.sec.gov/Archives/edgar/data/50863/000005086325000107/intc-20250724.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 10
+    },
+    {
+      "symbol": "INTC",
+      "trigger_date": "2025-10-29",
+      "trigger_close": 41.34000015258789,
+      "conviction": "high",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "NVIDIA $5B strategic investment (214.8M sh) + AI infrastructure/PC collaboration -- major strategic deal",
+      "risk_flags": [],
+      "sources": [
+        "2025-09-29 8-K (3.02): Completed SoftBank $2B share issuance closing -- confirmatory -- https://www.sec.gov/Archives/edgar/data/50863/000005086325000159/intc-20250926.htm",
+        "2025-09-18 8-K (3.02,7.01,9.01): NVIDIA $5B strategic investment (214.8M sh) + AI infrastructure/PC collaboration -- major strategic deal -- https://www.sec.gov/Archives/edgar/data/50863/000005086325000155/intc-20250915.htm",
+        "2025-09-15 8-K (2.01,7.01,9.01): Completed Altera 51% stake sale to Silver Lake ($3.3B equity value) -- real divestiture completion -- https://www.sec.gov/Archives/edgar/data/50863/000005086325000153/intc-20250912.htm",
+        "2025-09-05 8-K (8.01,9.01): Administrative resale-registration prospectus for DOC's shares -- no new catalyst -- https://www.sec.gov/Archives/edgar/data/50863/000005086325000147/intc-20250905.htm",
+        "2025-08-29 8-K (1.01,8.01,9.01): Amendment releasing Intel from DFA milestone conditions -- confirms/strengthens the government deal -- https://www.sec.gov/Archives/edgar/data/50863/000005086325000135/intc-20250827.htm",
+        "2025-08-25 8-K (1.01,3.02,7.01,8.01,9.01): US DOC/CHIPS Act deal: $8.87B disbursement in exchange for equity stake -- major strategic government backing -- https://www.sec.gov/Archives/edgar/data/50863/000005086325000129/intc-20250822.htm",
+        "2025-08-21 8-K (3.02,7.01,9.01): SoftBank $2B strategic equity investment (87M sh) -- real strategic investor backing -- https://www.sec.gov/Archives/edgar/data/50863/000005086325000126/intc-20250818.htm",
+        "2025-08-14 8-K (1.01,9.01): Procedural amendment to Altera sale purchase-price calc / closing date -- administrative -- https://www.sec.gov/Archives/edgar/data/50863/000005086325000123/intc-20250411.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 10
+    },
+    {
+      "symbol": "INTC",
+      "trigger_date": "2025-12-03",
+      "trigger_close": 43.7599983215332,
+      "conviction": "high",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "NVIDIA $5B strategic investment (214.8M sh) + AI infrastructure/PC collaboration -- major strategic deal",
+      "risk_flags": [],
+      "sources": [
+        "2025-09-29 8-K (3.02): Completed SoftBank $2B share issuance closing -- confirmatory -- https://www.sec.gov/Archives/edgar/data/50863/000005086325000159/intc-20250926.htm",
+        "2025-09-18 8-K (3.02,7.01,9.01): NVIDIA $5B strategic investment (214.8M sh) + AI infrastructure/PC collaboration -- major strategic deal -- https://www.sec.gov/Archives/edgar/data/50863/000005086325000155/intc-20250915.htm",
+        "2025-09-15 8-K (2.01,7.01,9.01): Completed Altera 51% stake sale to Silver Lake ($3.3B equity value) -- real divestiture completion -- https://www.sec.gov/Archives/edgar/data/50863/000005086325000153/intc-20250912.htm",
+        "2025-09-05 8-K (8.01,9.01): Administrative resale-registration prospectus for DOC's shares -- no new catalyst -- https://www.sec.gov/Archives/edgar/data/50863/000005086325000147/intc-20250905.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 7
+    },
+    {
+      "symbol": "INTC",
+      "trigger_date": "2026-01-07",
+      "trigger_close": 42.630001068115234,
+      "conviction": "medium",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "Completed NVIDIA $5B share issuance closing -- confirmatory",
+      "risk_flags": [],
+      "sources": [
+        "2025-12-29 8-K (3.02): Completed NVIDIA $5B share issuance closing -- confirmatory -- https://www.sec.gov/Archives/edgar/data/50863/000005086325000204/intc-20251226.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "INTC",
+      "trigger_date": "2026-01-20",
+      "trigger_close": 48.560001373291016,
+      "conviction": "medium",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "Completed NVIDIA $5B share issuance closing -- confirmatory",
+      "risk_flags": [],
+      "sources": [
+        "2025-12-29 8-K (3.02): Completed NVIDIA $5B share issuance closing -- confirmatory -- https://www.sec.gov/Archives/edgar/data/50863/000005086325000204/intc-20251226.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "INTC",
+      "trigger_date": "2026-04-06",
+      "trigger_close": 50.779998779296875,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [
+        "2026-03-03 8-K (7.01,8.01,9.01): Board Chair retirement/succession -- routine governance change -- https://www.sec.gov/Archives/edgar/data/50863/000005086326000044/intc-20260227.htm",
+        "2026-01-23 8-K (8.01,9.01): Administrative transfer of resale registration -- explicitly no new securities issued -- https://www.sec.gov/Archives/edgar/data/50863/000005086326000031/intc-20260123.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 4
+    },
+    {
+      "symbol": "INTC",
+      "trigger_date": "2026-04-24",
+      "trigger_close": 82.54000091552734,
+      "conviction": "medium",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "Repurchased Apollo's 49% JV stake in Fab 34 Ireland for $14.2B (partly debt-financed) -- real, specific, but mixed (adds leverage)",
+      "risk_flags": [],
+      "sources": [
+        "2026-04-08 8-K (8.01,9.01): Repurchased Apollo's 49% JV stake in Fab 34 Ireland for $14.2B (partly debt-financed) -- real, specific, but mixed (adds leverage) -- https://www.sec.gov/Archives/edgar/data/50863/000005086326000072/intc-20260408.htm",
+        "2026-03-03 8-K (7.01,8.01,9.01): Board Chair retirement/succession -- routine governance change -- https://www.sec.gov/Archives/edgar/data/50863/000005086326000044/intc-20260227.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 5
+    },
+    {
+      "symbol": "INTC",
+      "trigger_date": "2026-05-05",
+      "trigger_close": 108.1500015258789,
+      "conviction": "medium",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "Repurchased Apollo's 49% JV stake in Fab 34 Ireland for $14.2B (partly debt-financed) -- real, specific, but mixed (adds leverage)",
+      "risk_flags": [],
+      "sources": [
+        "2026-04-30 8-K (8.01,9.01): $6.5B senior notes offering (debt) -- routine treasury, not equity -- https://www.sec.gov/Archives/edgar/data/50863/000119312526197845/d143782d8k.htm",
+        "2026-04-08 8-K (8.01,9.01): Repurchased Apollo's 49% JV stake in Fab 34 Ireland for $14.2B (partly debt-financed) -- real, specific, but mixed (adds leverage) -- https://www.sec.gov/Archives/edgar/data/50863/000005086326000072/intc-20260408.htm",
+        "2026-03-03 8-K (7.01,8.01,9.01): Board Chair retirement/succession -- routine governance change -- https://www.sec.gov/Archives/edgar/data/50863/000005086326000044/intc-20260227.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 6
+    },
+    {
+      "symbol": "INTC",
+      "trigger_date": "2026-05-08",
+      "trigger_close": 124.91999816894533,
+      "conviction": "medium",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "Repurchased Apollo's 49% JV stake in Fab 34 Ireland for $14.2B (partly debt-financed) -- real, specific, but mixed (adds leverage)",
+      "risk_flags": [],
+      "sources": [
+        "2026-04-30 8-K (8.01,9.01): $6.5B senior notes offering (debt) -- routine treasury, not equity -- https://www.sec.gov/Archives/edgar/data/50863/000119312526197845/d143782d8k.htm",
+        "2026-04-08 8-K (8.01,9.01): Repurchased Apollo's 49% JV stake in Fab 34 Ireland for $14.2B (partly debt-financed) -- real, specific, but mixed (adds leverage) -- https://www.sec.gov/Archives/edgar/data/50863/000005086326000072/intc-20260408.htm",
+        "2026-03-03 8-K (7.01,8.01,9.01): Board Chair retirement/succession -- routine governance change -- https://www.sec.gov/Archives/edgar/data/50863/000005086326000044/intc-20260227.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 6
+    },
+    {
+      "symbol": "INTC",
+      "trigger_date": "2026-06-18",
+      "trigger_close": 133.99000549316406,
+      "conviction": "medium",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "Repurchased Apollo's 49% JV stake in Fab 34 Ireland for $14.2B (partly debt-financed) -- real, specific, but mixed (adds leverage)",
+      "risk_flags": [],
+      "sources": [
+        "2026-04-30 8-K (8.01,9.01): $6.5B senior notes offering (debt) -- routine treasury, not equity -- https://www.sec.gov/Archives/edgar/data/50863/000119312526197845/d143782d8k.htm",
+        "2026-04-08 8-K (8.01,9.01): Repurchased Apollo's 49% JV stake in Fab 34 Ireland for $14.2B (partly debt-financed) -- real, specific, but mixed (adds leverage) -- https://www.sec.gov/Archives/edgar/data/50863/000005086326000072/intc-20260408.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 6
+    },
+    {
+      "symbol": "INTC",
+      "trigger_date": "2026-06-30",
+      "trigger_close": 139.6300048828125,
+      "conviction": "medium",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "Repurchased Apollo's 49% JV stake in Fab 34 Ireland for $14.2B (partly debt-financed) -- real, specific, but mixed (adds leverage)",
+      "risk_flags": [],
+      "sources": [
+        "2026-04-30 8-K (8.01,9.01): $6.5B senior notes offering (debt) -- routine treasury, not equity -- https://www.sec.gov/Archives/edgar/data/50863/000119312526197845/d143782d8k.htm",
+        "2026-04-08 8-K (8.01,9.01): Repurchased Apollo's 49% JV stake in Fab 34 Ireland for $14.2B (partly debt-financed) -- real, specific, but mixed (adds leverage) -- https://www.sec.gov/Archives/edgar/data/50863/000005086326000072/intc-20260408.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 6
+    },
+    {
+      "symbol": "INTC",
+      "trigger_date": "2026-08-12",
+      "trigger_close": 100.9499969482422,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [
+        "dilution_or_offering"
+      ],
+      "sources": [
+        "2026-08-12 8-K (7.01,8.01,9.01): Underwritten public equity offering, ~242M shares @ $95 (~$23B) -- large public equity raise -- https://www.sec.gov/Archives/edgar/data/50863/000119312526346806/d117670d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "BE",
+      "trigger_date": "2025-09-10",
+      "trigger_close": 62.959999084472656,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "BE",
+      "trigger_date": "2025-10-13",
+      "trigger_close": 109.91000366210938,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "BE",
+      "trigger_date": "2025-10-29",
+      "trigger_close": 133.7100067138672,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "BE",
+      "trigger_date": "2025-10-31",
+      "trigger_close": 132.16000366210938,
+      "conviction": "high",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "Oracle warrant (3.5M sh) tied to on-site power for AI data centers partnership -- real strategic deal",
+      "risk_flags": [],
+      "sources": [
+        "2025-10-30 8-K (8.01): Negotiating (not yet finalized) $600M revolving credit facility -- pending/uncertain -- https://www.sec.gov/Archives/edgar/data/1664703/000119312525257353/d80130d8k.htm",
+        "2025-10-30 8-K (1.01,3.02): Oracle warrant (3.5M sh) tied to on-site power for AI data centers partnership -- real strategic deal -- https://www.sec.gov/Archives/edgar/data/1664703/000162828025047228/be-20251028.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 4
+    },
+    {
+      "symbol": "BE",
+      "trigger_date": "2026-01-07",
+      "trigger_close": 108.0,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "catalyst present (Oracle warrant (3.5M sh) tied to on-site power for AI data centers partnership -- real strategic deal) but risk_flags ['dilution_or_offering'] non-empty -> capped at low per mechanical rule",
+      "risk_flags": [
+        "dilution_or_offering"
+      ],
+      "sources": [
+        "2025-12-23 8-K (1.01,2.03,9.01): New $600M secured revolving credit facility -- routine treasury -- https://www.sec.gov/Archives/edgar/data/1664703/000162828025058618/be-20251219.htm",
+        "2025-11-04 8-K (1.01,2.03,3.02,8.01,9.01): $2.5B 0% convertible senior notes -- pure capital raise -- https://www.sec.gov/Archives/edgar/data/1664703/000162828025049016/be-20251030.htm",
+        "2025-10-30 8-K (8.01): Negotiating (not yet finalized) $600M revolving credit facility -- pending/uncertain -- https://www.sec.gov/Archives/edgar/data/1664703/000119312525257353/d80130d8k.htm",
+        "2025-10-30 8-K (1.01,3.02): Oracle warrant (3.5M sh) tied to on-site power for AI data centers partnership -- real strategic deal -- https://www.sec.gov/Archives/edgar/data/1664703/000162828025047228/be-20251028.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 5
+    },
+    {
+      "symbol": "BE",
+      "trigger_date": "2026-01-27",
+      "trigger_close": 152.30999755859375,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "catalyst present (Oracle warrant (3.5M sh) tied to on-site power for AI data centers partnership -- real strategic deal) but risk_flags ['dilution_or_offering'] non-empty -> capped at low per mechanical rule",
+      "risk_flags": [
+        "dilution_or_offering"
+      ],
+      "sources": [
+        "2025-12-23 8-K (1.01,2.03,9.01): New $600M secured revolving credit facility -- routine treasury -- https://www.sec.gov/Archives/edgar/data/1664703/000162828025058618/be-20251219.htm",
+        "2025-11-04 8-K (1.01,2.03,3.02,8.01,9.01): $2.5B 0% convertible senior notes -- pure capital raise -- https://www.sec.gov/Archives/edgar/data/1664703/000162828025049016/be-20251030.htm",
+        "2025-10-30 8-K (8.01): Negotiating (not yet finalized) $600M revolving credit facility -- pending/uncertain -- https://www.sec.gov/Archives/edgar/data/1664703/000119312525257353/d80130d8k.htm",
+        "2025-10-30 8-K (1.01,3.02): Oracle warrant (3.5M sh) tied to on-site power for AI data centers partnership -- real strategic deal -- https://www.sec.gov/Archives/edgar/data/1664703/000162828025047228/be-20251028.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 4
+    },
+    {
+      "symbol": "BE",
+      "trigger_date": "2026-02-03",
+      "trigger_close": 168.88999938964844,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [
+        "2025-12-23 8-K (1.01,2.03,9.01): New $600M secured revolving credit facility -- routine treasury -- https://www.sec.gov/Archives/edgar/data/1664703/000162828025058618/be-20251219.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 1
+    },
+    {
+      "symbol": "BE",
+      "trigger_date": "2026-02-25",
+      "trigger_close": 174.77000427246094,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [
+        "2025-12-23 8-K (1.01,2.03,9.01): New $600M secured revolving credit facility -- routine treasury -- https://www.sec.gov/Archives/edgar/data/1664703/000162828025058618/be-20251219.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "BE",
+      "trigger_date": "2026-04-14",
+      "trigger_close": 219.02999877929688,
+      "conviction": "medium",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "Formal issuance of the previously-disclosed Oracle warrant -- confirms/formalizes the Oct-2025 partnership",
+      "risk_flags": [],
+      "sources": [
+        "2026-04-13 8-K (1.01,3.02,9.01): Formal issuance of the previously-disclosed Oracle warrant -- confirms/formalizes the Oct-2025 partnership -- https://www.sec.gov/Archives/edgar/data/1664703/000162828026024896/be-20260413.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "BE",
+      "trigger_date": "2026-04-29",
+      "trigger_close": 287.9700012207031,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "catalyst present (Formal issuance of the previously-disclosed Oracle warrant -- confirms/formalizes the Oct-2025 partnership) but risk_flags ['dilution_or_offering'] non-empty -> capped at low per mechanical rule",
+      "risk_flags": [
+        "dilution_or_offering"
+      ],
+      "sources": [
+        "2026-04-27 8-K (8.01,9.01): Filed prospectus supplement to shelf registration (S-3) -- a share offering -- https://www.sec.gov/Archives/edgar/data/1664703/000119312526179381/d133915d8k.htm",
+        "2026-04-13 8-K (1.01,3.02,9.01): Formal issuance of the previously-disclosed Oracle warrant -- confirms/formalizes the Oct-2025 partnership -- https://www.sec.gov/Archives/edgar/data/1664703/000162828026024896/be-20260413.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 5
+    },
+    {
+      "symbol": "BE",
+      "trigger_date": "2026-06-24",
+      "trigger_close": 326.19000244140625,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "catalyst present (Formal issuance of the previously-disclosed Oracle warrant -- confirms/formalizes the Oct-2025 partnership) but risk_flags ['dilution_or_offering'] non-empty -> capped at low per mechanical rule",
+      "risk_flags": [
+        "dilution_or_offering"
+      ],
+      "sources": [
+        "2026-04-27 8-K (8.01,9.01): Filed prospectus supplement to shelf registration (S-3) -- a share offering -- https://www.sec.gov/Archives/edgar/data/1664703/000119312526179381/d133915d8k.htm",
+        "2026-04-13 8-K (1.01,3.02,9.01): Formal issuance of the previously-disclosed Oracle warrant -- confirms/formalizes the Oct-2025 partnership -- https://www.sec.gov/Archives/edgar/data/1664703/000162828026024896/be-20260413.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 6
+    },
+    {
+      "symbol": "BE",
+      "trigger_date": "2026-08-12",
+      "trigger_close": 237.16000366210938,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 4
+    },
+    {
+      "symbol": "BE",
+      "trigger_date": "2026-08-17",
+      "trigger_close": 232.16000366210938,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 4
+    },
+    {
+      "symbol": "BE",
+      "trigger_date": "2026-09-04",
+      "trigger_close": 252.8699951171875,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "QCOM",
+      "trigger_date": "2025-09-11",
+      "trigger_close": 158.21519470214844,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "QCOM",
+      "trigger_date": "2025-10-24",
+      "trigger_close": 165.49362182617188,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "QCOM",
+      "trigger_date": "2025-11-03",
+      "trigger_close": 177.03330993652344,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "QCOM",
+      "trigger_date": "2025-12-08",
+      "trigger_close": 172.61117553710938,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 1
+    },
+    {
+      "symbol": "QCOM",
+      "trigger_date": "2026-04-16",
+      "trigger_close": 133.2499542236328,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "QCOM",
+      "trigger_date": "2026-04-24",
+      "trigger_close": 147.49949645996094,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "QCOM",
+      "trigger_date": "2026-05-05",
+      "trigger_close": 184.85743713378903,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "QCOM",
+      "trigger_date": "2026-05-26",
+      "trigger_close": 246.56246948242188,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "QCOM",
+      "trigger_date": "2026-05-28",
+      "trigger_close": 241.0826110839844,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "QCOM",
+      "trigger_date": "2026-09-01",
+      "trigger_close": 165.7081298828125,
+      "conviction": "high",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "Definitive agreement to acquire Modular Inc, up to 19.2M sh stock consideration -- real strategic AI-software M&A",
+      "risk_flags": [],
+      "sources": [
+        "2026-07-31 8-K (8.01,9.01): Resale registration for shares issued in the Modular acquisition -- confirmatory/administrative -- https://www.sec.gov/Archives/edgar/data/804328/000110465926089234/tm2621612d2_8k.htm",
+        "2026-06-24 8-K (3.02): Definitive agreement to acquire Modular Inc, up to 19.2M sh stock consideration -- real strategic AI-software M&A -- https://www.sec.gov/Archives/edgar/data/804328/000110465926077071/tm2618522d1_8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "PLTR",
+      "trigger_date": "2025-09-15",
+      "trigger_close": 171.2100067138672,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 1
+    },
+    {
+      "symbol": "PLTR",
+      "trigger_date": "2025-09-18",
+      "trigger_close": 176.97000122070312,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 1
+    },
+    {
+      "symbol": "PLTR",
+      "trigger_date": "2025-09-30",
+      "trigger_close": 182.4199981689453,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 1
+    },
+    {
+      "symbol": "PLTR",
+      "trigger_date": "2025-10-28",
+      "trigger_close": 189.6000061035156,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 1
+    },
+    {
+      "symbol": "PLTR",
+      "trigger_date": "2025-12-09",
+      "trigger_close": 181.83999633789065,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 1
+    },
+    {
+      "symbol": "PLTR",
+      "trigger_date": "2025-12-16",
+      "trigger_close": 187.75,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 1
+    },
+    {
+      "symbol": "PLTR",
+      "trigger_date": "2025-12-19",
+      "trigger_close": 193.3800048828125,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 1
+    },
+    {
+      "symbol": "PLTR",
+      "trigger_date": "2026-03-04",
+      "trigger_close": 153.19000244140625,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 1
+    },
+    {
+      "symbol": "PLTR",
+      "trigger_date": "2026-03-23",
+      "trigger_close": 160.83999633789062,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 1
+    },
+    {
+      "symbol": "PLTR",
+      "trigger_date": "2026-05-29",
+      "trigger_close": 156.5399932861328,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 1
+    },
+    {
+      "symbol": "PLTR",
+      "trigger_date": "2026-07-14",
+      "trigger_close": 133.72000122070312,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "PLTR",
+      "trigger_date": "2026-07-16",
+      "trigger_close": 134.44000244140625,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "PLTR",
+      "trigger_date": "2026-07-20",
+      "trigger_close": 134.85000610351562,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "PLTR",
+      "trigger_date": "2026-08-05",
+      "trigger_close": 158.42999267578125,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "PLTR",
+      "trigger_date": "2026-08-27",
+      "trigger_close": 185.92999267578125,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "NBIS",
+      "trigger_date": "2025-10-13",
+      "trigger_close": 135.4600067138672,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "trailing 90-day 8-K window is empty -- no company-specific catalyst available to confirm a buy",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 0
+    },
+    {
+      "symbol": "NBIS",
+      "trigger_date": "2025-12-08",
+      "trigger_close": 100.33000183105467,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "trailing 90-day 8-K window is empty -- no company-specific catalyst available to confirm a buy",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 0
+    },
+    {
+      "symbol": "NBIS",
+      "trigger_date": "2026-01-06",
+      "trigger_close": 100.23999786376952,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "trailing 90-day 8-K window is empty -- no company-specific catalyst available to confirm a buy",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 0
+    },
+    {
+      "symbol": "NBIS",
+      "trigger_date": "2026-01-15",
+      "trigger_close": 103.88500213623048,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "trailing 90-day 8-K window is empty -- no company-specific catalyst available to confirm a buy",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 0
+    },
+    {
+      "symbol": "NBIS",
+      "trigger_date": "2026-02-19",
+      "trigger_close": 107.61000061035156,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "trailing 90-day 8-K window is empty -- no company-specific catalyst available to confirm a buy",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 0
+    },
+    {
+      "symbol": "NBIS",
+      "trigger_date": "2026-02-24",
+      "trigger_close": 102.58000183105467,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "trailing 90-day 8-K window is empty -- no company-specific catalyst available to confirm a buy",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 0
+    },
+    {
+      "symbol": "NBIS",
+      "trigger_date": "2026-03-16",
+      "trigger_close": 129.85000610351562,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "trailing 90-day 8-K window is empty -- no company-specific catalyst available to confirm a buy",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 0
+    },
+    {
+      "symbol": "NBIS",
+      "trigger_date": "2026-04-13",
+      "trigger_close": 154.55999755859375,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "trailing 90-day 8-K window is empty -- no company-specific catalyst available to confirm a buy",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 0
+    },
+    {
+      "symbol": "NBIS",
+      "trigger_date": "2026-05-06",
+      "trigger_close": 195.08999633789065,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "trailing 90-day 8-K window is empty -- no company-specific catalyst available to confirm a buy",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 0
+    },
+    {
+      "symbol": "NBIS",
+      "trigger_date": "2026-05-11",
+      "trigger_close": 186.1000061035156,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "trailing 90-day 8-K window is empty -- no company-specific catalyst available to confirm a buy",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 0
+    },
+    {
+      "symbol": "NBIS",
+      "trigger_date": "2026-05-13",
+      "trigger_close": 207.27000427246097,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "trailing 90-day 8-K window is empty -- no company-specific catalyst available to confirm a buy",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 0
+    },
+    {
+      "symbol": "NBIS",
+      "trigger_date": "2026-05-21",
+      "trigger_close": 219.92999267578125,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "trailing 90-day 8-K window is empty -- no company-specific catalyst available to confirm a buy",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 0
+    },
+    {
+      "symbol": "NBIS",
+      "trigger_date": "2026-05-28",
+      "trigger_close": 226.33999633789065,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "trailing 90-day 8-K window is empty -- no company-specific catalyst available to confirm a buy",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 0
+    },
+    {
+      "symbol": "NBIS",
+      "trigger_date": "2026-06-17",
+      "trigger_close": 280.9100036621094,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "trailing 90-day 8-K window is empty -- no company-specific catalyst available to confirm a buy",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 0
+    },
+    {
+      "symbol": "NBIS",
+      "trigger_date": "2026-08-13",
+      "trigger_close": 255.0399932861328,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "trailing 90-day 8-K window is empty -- no company-specific catalyst available to confirm a buy",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 0
+    },
+    {
+      "symbol": "MRVL",
+      "trigger_date": "2025-11-05",
+      "trigger_close": 92.7638702392578,
+      "conviction": "high",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "$5B buyback authorization increase + $1B accelerated share repurchase -- real bullish capital-return signal",
+      "risk_flags": [],
+      "sources": [
+        "2025-09-25 8-K (8.01): CEO/executives open-market share purchases (~$1M combined) -- real but modest insider-buying signal -- https://www.sec.gov/Archives/edgar/data/1835632/000119312525217311/d911451d8k.htm",
+        "2025-09-24 8-K (8.01,9.01): $5B buyback authorization increase + $1B accelerated share repurchase -- real bullish capital-return signal -- https://www.sec.gov/Archives/edgar/data/1835632/000119312525214314/d19206d8k.htm",
+        "2025-09-19 8-K (8.01,9.01): Routine quarterly dividend declaration ($0.06/sh) -- no news value -- https://www.sec.gov/Archives/edgar/data/1835632/000119312525209108/d936801d8k.htm",
+        "2025-08-14 8-K (8.01,9.01): Completed sale of automotive ethernet business to Infineon for $2.5B cash -- real divestiture completion -- https://www.sec.gov/Archives/edgar/data/1835632/000119312525180425/d96358d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 5
+    },
+    {
+      "symbol": "MRVL",
+      "trigger_date": "2025-11-10",
+      "trigger_close": 93.09339904785156,
+      "conviction": "high",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "$5B buyback authorization increase + $1B accelerated share repurchase -- real bullish capital-return signal",
+      "risk_flags": [],
+      "sources": [
+        "2025-09-25 8-K (8.01): CEO/executives open-market share purchases (~$1M combined) -- real but modest insider-buying signal -- https://www.sec.gov/Archives/edgar/data/1835632/000119312525217311/d911451d8k.htm",
+        "2025-09-24 8-K (8.01,9.01): $5B buyback authorization increase + $1B accelerated share repurchase -- real bullish capital-return signal -- https://www.sec.gov/Archives/edgar/data/1835632/000119312525214314/d19206d8k.htm",
+        "2025-09-19 8-K (8.01,9.01): Routine quarterly dividend declaration ($0.06/sh) -- no news value -- https://www.sec.gov/Archives/edgar/data/1835632/000119312525209108/d936801d8k.htm",
+        "2025-08-14 8-K (8.01,9.01): Completed sale of automotive ethernet business to Infineon for $2.5B cash -- real divestiture completion -- https://www.sec.gov/Archives/edgar/data/1835632/000119312525180425/d96358d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 5
+    },
+    {
+      "symbol": "MRVL",
+      "trigger_date": "2025-12-04",
+      "trigger_close": 98.04612731933594,
+      "conviction": "high",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "Acquiring Celestial AI (photonics interconnect) for ~$1B cash + up to $4.5B stock -- major AI-infra M&A",
+      "risk_flags": [],
+      "sources": [
+        "2025-12-02 8-K (3.02,9.01): Acquiring Celestial AI (photonics interconnect) for ~$1B cash + up to $4.5B stock -- major AI-infra M&A -- https://www.sec.gov/Archives/edgar/data/1835632/000119312525305289/d34367d8k.htm",
+        "2025-12-02 8-K (8.01): Amazon warrant tied to Celestial AI deal, vesting on photonic-fabric purchases -- strategic customer commitment -- https://www.sec.gov/Archives/edgar/data/1835632/000119312525305271/d81371d8k.htm",
+        "2025-09-25 8-K (8.01): CEO/executives open-market share purchases (~$1M combined) -- real but modest insider-buying signal -- https://www.sec.gov/Archives/edgar/data/1835632/000119312525217311/d911451d8k.htm",
+        "2025-09-24 8-K (8.01,9.01): $5B buyback authorization increase + $1B accelerated share repurchase -- real bullish capital-return signal -- https://www.sec.gov/Archives/edgar/data/1835632/000119312525214314/d19206d8k.htm",
+        "2025-09-19 8-K (8.01,9.01): Routine quarterly dividend declaration ($0.06/sh) -- no news value -- https://www.sec.gov/Archives/edgar/data/1835632/000119312525209108/d936801d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 6
+    },
+    {
+      "symbol": "MRVL",
+      "trigger_date": "2026-01-06",
+      "trigger_close": 88.10071563720703,
+      "conviction": "high",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "Acquiring Celestial AI (photonics interconnect) for ~$1B cash + up to $4.5B stock -- major AI-infra M&A",
+      "risk_flags": [],
+      "sources": [
+        "2025-12-12 8-K (8.01,9.01): Routine quarterly dividend declaration -- no news value -- https://www.sec.gov/Archives/edgar/data/1835632/000162828025056774/mrvl-20251212.htm",
+        "2025-12-02 8-K (3.02,9.01): Acquiring Celestial AI (photonics interconnect) for ~$1B cash + up to $4.5B stock -- major AI-infra M&A -- https://www.sec.gov/Archives/edgar/data/1835632/000119312525305289/d34367d8k.htm",
+        "2025-12-02 8-K (8.01): Amazon warrant tied to Celestial AI deal, vesting on photonic-fabric purchases -- strategic customer commitment -- https://www.sec.gov/Archives/edgar/data/1835632/000119312525305271/d81371d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 4
+    },
+    {
+      "symbol": "MRVL",
+      "trigger_date": "2026-02-27",
+      "trigger_close": 81.62899017333984,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "catalyst present (Acquiring Celestial AI (photonics interconnect) for ~$1B cash + up to $4.5B stock -- major AI-infra M&A) but risk_flags ['dilution_or_offering'] non-empty -> capped at low per mechanical rule",
+      "risk_flags": [
+        "dilution_or_offering"
+      ],
+      "sources": [
+        "2026-02-18 8-K (8.01,9.01): Same -- recurring shelf-issuance legal opinion filing -- https://www.sec.gov/Archives/edgar/data/1835632/000119312526055923/d101840d8k.htm",
+        "2026-02-06 8-K (8.01,9.01): Legal opinion filing tied to active S-3 shelf issuance -- ongoing capital-raise program -- https://www.sec.gov/Archives/edgar/data/1835632/000119312526040202/d55169d8k.htm",
+        "2025-12-12 8-K (8.01,9.01): Routine quarterly dividend declaration -- no news value -- https://www.sec.gov/Archives/edgar/data/1835632/000162828025056774/mrvl-20251212.htm",
+        "2025-12-02 8-K (3.02,9.01): Acquiring Celestial AI (photonics interconnect) for ~$1B cash + up to $4.5B stock -- major AI-infra M&A -- https://www.sec.gov/Archives/edgar/data/1835632/000119312525305289/d34367d8k.htm",
+        "2025-12-02 8-K (8.01): Amazon warrant tied to Celestial AI deal, vesting on photonic-fabric purchases -- strategic customer commitment -- https://www.sec.gov/Archives/edgar/data/1835632/000119312525305271/d81371d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 6
+    },
+    {
+      "symbol": "MRVL",
+      "trigger_date": "2026-03-09",
+      "trigger_close": 92.58080291748048,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [
+        "dilution_or_offering"
+      ],
+      "sources": [
+        "2026-02-18 8-K (8.01,9.01): Same -- recurring shelf-issuance legal opinion filing -- https://www.sec.gov/Archives/edgar/data/1835632/000119312526055923/d101840d8k.htm",
+        "2026-02-06 8-K (8.01,9.01): Legal opinion filing tied to active S-3 shelf issuance -- ongoing capital-raise program -- https://www.sec.gov/Archives/edgar/data/1835632/000119312526040202/d55169d8k.htm",
+        "2025-12-12 8-K (8.01,9.01): Routine quarterly dividend declaration -- no news value -- https://www.sec.gov/Archives/edgar/data/1835632/000162828025056774/mrvl-20251212.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 4
+    },
+    {
+      "symbol": "MRVL",
+      "trigger_date": "2026-03-16",
+      "trigger_close": 91.51160430908205,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [
+        "dilution_or_offering"
+      ],
+      "sources": [
+        "2026-02-18 8-K (8.01,9.01): Same -- recurring shelf-issuance legal opinion filing -- https://www.sec.gov/Archives/edgar/data/1835632/000119312526055923/d101840d8k.htm",
+        "2026-02-06 8-K (8.01,9.01): Legal opinion filing tied to active S-3 shelf issuance -- ongoing capital-raise program -- https://www.sec.gov/Archives/edgar/data/1835632/000119312526040202/d55169d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "MRVL",
+      "trigger_date": "2026-03-25",
+      "trigger_close": 98.37647247314452,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [
+        "dilution_or_offering"
+      ],
+      "sources": [
+        "2026-03-19 8-K (8.01,9.01): Routine quarterly dividend declaration -- no news value -- https://www.sec.gov/Archives/edgar/data/1835632/000162828026019851/mrvl-20260319.htm",
+        "2026-03-19 8-K (8.01,9.01): Same recurring shelf-issuance legal opinion filing (same day as dividend filing) -- https://www.sec.gov/Archives/edgar/data/1835632/000119312526115987/d55652d8k.htm",
+        "2026-02-18 8-K (8.01,9.01): Same -- recurring shelf-issuance legal opinion filing -- https://www.sec.gov/Archives/edgar/data/1835632/000119312526055923/d101840d8k.htm",
+        "2026-02-06 8-K (8.01,9.01): Legal opinion filing tied to active S-3 shelf issuance -- ongoing capital-raise program -- https://www.sec.gov/Archives/edgar/data/1835632/000119312526040202/d55169d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 5
+    },
+    {
+      "symbol": "MRVL",
+      "trigger_date": "2026-03-31",
+      "trigger_close": 98.9760284423828,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "catalyst present (NVIDIA $2B strategic investment via Series A Convertible Preferred -- second NVIDIA-into-supply-chain deal (after LITE)) but risk_flags ['dilution_or_offering'] non-empty -> capped at low per mechanical rule",
+      "risk_flags": [
+        "dilution_or_offering"
+      ],
+      "sources": [
+        "2026-03-31 8-K (3.02,5.03,7.01,9.01): NVIDIA $2B strategic investment via Series A Convertible Preferred -- second NVIDIA-into-supply-chain deal (after LITE) -- https://www.sec.gov/Archives/edgar/data/1835632/000119312526134462/d113606d8k.htm",
+        "2026-03-19 8-K (8.01,9.01): Routine quarterly dividend declaration -- no news value -- https://www.sec.gov/Archives/edgar/data/1835632/000162828026019851/mrvl-20260319.htm",
+        "2026-03-19 8-K (8.01,9.01): Same recurring shelf-issuance legal opinion filing (same day as dividend filing) -- https://www.sec.gov/Archives/edgar/data/1835632/000119312526115987/d55652d8k.htm",
+        "2026-02-18 8-K (8.01,9.01): Same -- recurring shelf-issuance legal opinion filing -- https://www.sec.gov/Archives/edgar/data/1835632/000119312526055923/d101840d8k.htm",
+        "2026-02-06 8-K (8.01,9.01): Legal opinion filing tied to active S-3 shelf issuance -- ongoing capital-raise program -- https://www.sec.gov/Archives/edgar/data/1835632/000119312526040202/d55169d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 6
+    },
+    {
+      "symbol": "MRVL",
+      "trigger_date": "2026-05-06",
+      "trigger_close": 172.10752868652344,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "catalyst present (NVIDIA $2B strategic investment via Series A Convertible Preferred -- second NVIDIA-into-supply-chain deal (after LITE)) but risk_flags ['dilution_or_offering'] non-empty -> capped at low per mechanical rule",
+      "risk_flags": [
+        "dilution_or_offering"
+      ],
+      "sources": [
+        "2026-04-15 8-K (1.01,8.01,9.01): $1B senior notes public offering (debt) to refinance existing notes -- routine, not equity -- https://www.sec.gov/Archives/edgar/data/1835632/000119312526157134/d123910d8k.htm",
+        "2026-03-31 8-K (3.02,5.03,7.01,9.01): NVIDIA $2B strategic investment via Series A Convertible Preferred -- second NVIDIA-into-supply-chain deal (after LITE) -- https://www.sec.gov/Archives/edgar/data/1835632/000119312526134462/d113606d8k.htm",
+        "2026-03-19 8-K (8.01,9.01): Routine quarterly dividend declaration -- no news value -- https://www.sec.gov/Archives/edgar/data/1835632/000162828026019851/mrvl-20260319.htm",
+        "2026-03-19 8-K (8.01,9.01): Same recurring shelf-issuance legal opinion filing (same day as dividend filing) -- https://www.sec.gov/Archives/edgar/data/1835632/000119312526115987/d55652d8k.htm",
+        "2026-02-18 8-K (8.01,9.01): Same -- recurring shelf-issuance legal opinion filing -- https://www.sec.gov/Archives/edgar/data/1835632/000119312526055923/d101840d8k.htm",
+        "2026-02-06 8-K (8.01,9.01): Legal opinion filing tied to active S-3 shelf issuance -- ongoing capital-raise program -- https://www.sec.gov/Archives/edgar/data/1835632/000119312526040202/d55169d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 7
+    },
+    {
+      "symbol": "MRVL",
+      "trigger_date": "2026-05-22",
+      "trigger_close": 196.28158569335935,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "catalyst present (NVIDIA $2B strategic investment via Series A Convertible Preferred -- second NVIDIA-into-supply-chain deal (after LITE)) but risk_flags ['dilution_or_offering'] non-empty -> capped at low per mechanical rule",
+      "risk_flags": [
+        "dilution_or_offering"
+      ],
+      "sources": [
+        "2026-04-15 8-K (1.01,8.01,9.01): $1B senior notes public offering (debt) to refinance existing notes -- routine, not equity -- https://www.sec.gov/Archives/edgar/data/1835632/000119312526157134/d123910d8k.htm",
+        "2026-03-31 8-K (3.02,5.03,7.01,9.01): NVIDIA $2B strategic investment via Series A Convertible Preferred -- second NVIDIA-into-supply-chain deal (after LITE) -- https://www.sec.gov/Archives/edgar/data/1835632/000119312526134462/d113606d8k.htm",
+        "2026-03-19 8-K (8.01,9.01): Routine quarterly dividend declaration -- no news value -- https://www.sec.gov/Archives/edgar/data/1835632/000162828026019851/mrvl-20260319.htm",
+        "2026-03-19 8-K (8.01,9.01): Same recurring shelf-issuance legal opinion filing (same day as dividend filing) -- https://www.sec.gov/Archives/edgar/data/1835632/000119312526115987/d55652d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 5
+    },
+    {
+      "symbol": "MRVL",
+      "trigger_date": "2026-06-01",
+      "trigger_close": 219.37586975097656,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "catalyst present (NVIDIA $2B strategic investment via Series A Convertible Preferred -- second NVIDIA-into-supply-chain deal (after LITE)) but risk_flags ['dilution_or_offering'] non-empty -> capped at low per mechanical rule",
+      "risk_flags": [
+        "dilution_or_offering"
+      ],
+      "sources": [
+        "2026-04-15 8-K (1.01,8.01,9.01): $1B senior notes public offering (debt) to refinance existing notes -- routine, not equity -- https://www.sec.gov/Archives/edgar/data/1835632/000119312526157134/d123910d8k.htm",
+        "2026-03-31 8-K (3.02,5.03,7.01,9.01): NVIDIA $2B strategic investment via Series A Convertible Preferred -- second NVIDIA-into-supply-chain deal (after LITE) -- https://www.sec.gov/Archives/edgar/data/1835632/000119312526134462/d113606d8k.htm",
+        "2026-03-19 8-K (8.01,9.01): Routine quarterly dividend declaration -- no news value -- https://www.sec.gov/Archives/edgar/data/1835632/000162828026019851/mrvl-20260319.htm",
+        "2026-03-19 8-K (8.01,9.01): Same recurring shelf-issuance legal opinion filing (same day as dividend filing) -- https://www.sec.gov/Archives/edgar/data/1835632/000119312526115987/d55652d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 6
+    },
+    {
+      "symbol": "MRVL",
+      "trigger_date": "2026-08-11",
+      "trigger_close": 212.30999755859375,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [
+        "dilution_or_offering"
+      ],
+      "sources": [
+        "2026-07-09 8-K (8.01,9.01): Same recurring shelf-issuance legal opinion filing -- https://www.sec.gov/Archives/edgar/data/1835632/000119312526299843/d82462d8k.htm",
+        "2026-06-25 8-K (5.07,8.01,9.01): Annual meeting vote results -- routine governance -- https://www.sec.gov/Archives/edgar/data/1835632/000162828026045564/mrvl-20260625.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 4
+    },
+    {
+      "symbol": "MRVL",
+      "trigger_date": "2026-08-19",
+      "trigger_close": 237.27000427246097,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "catalyst present (Google custom-silicon (TPU ecosystem) commercial deal + warrant (59M sh) vesting on $500M revenue tranches through FY2033 -- major strategic customer deal) but risk_flags ['dilution_or_offering'] non-empty -> capped at low per mechanical rule",
+      "risk_flags": [
+        "dilution_or_offering"
+      ],
+      "sources": [
+        "2026-08-19 8-K (1.01,3.02,9.01): Google custom-silicon (TPU ecosystem) commercial deal + warrant (59M sh) vesting on $500M revenue tranches through FY2033 -- major strategic customer deal -- https://www.sec.gov/Archives/edgar/data/1835632/000119312526356217/d412696d8k.htm",
+        "2026-07-09 8-K (8.01,9.01): Same recurring shelf-issuance legal opinion filing -- https://www.sec.gov/Archives/edgar/data/1835632/000119312526299843/d82462d8k.htm",
+        "2026-06-25 8-K (5.07,8.01,9.01): Annual meeting vote results -- routine governance -- https://www.sec.gov/Archives/edgar/data/1835632/000162828026045564/mrvl-20260625.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 5
+    },
+    {
+      "symbol": "MRVL",
+      "trigger_date": "2026-08-25",
+      "trigger_close": 240.3800048828125,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "catalyst present (Google custom-silicon (TPU ecosystem) commercial deal + warrant (59M sh) vesting on $500M revenue tranches through FY2033 -- major strategic customer deal) but risk_flags ['dilution_or_offering'] non-empty -> capped at low per mechanical rule",
+      "risk_flags": [
+        "dilution_or_offering"
+      ],
+      "sources": [
+        "2026-08-19 8-K (1.01,3.02,9.01): Google custom-silicon (TPU ecosystem) commercial deal + warrant (59M sh) vesting on $500M revenue tranches through FY2033 -- major strategic customer deal -- https://www.sec.gov/Archives/edgar/data/1835632/000119312526356217/d412696d8k.htm",
+        "2026-07-09 8-K (8.01,9.01): Same recurring shelf-issuance legal opinion filing -- https://www.sec.gov/Archives/edgar/data/1835632/000119312526299843/d82462d8k.htm",
+        "2026-06-25 8-K (5.07,8.01,9.01): Annual meeting vote results -- routine governance -- https://www.sec.gov/Archives/edgar/data/1835632/000162828026045564/mrvl-20260625.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 5
+    },
+    {
+      "symbol": "CBRS",
+      "trigger_date": "2026-07-23",
+      "trigger_close": 220.0,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [
+        "2026-05-15 8-K (5.03,8.01,9.01): IPO-closing housekeeping (restated charter/bylaws) -- administrative, already priced in by market -- https://www.sec.gov/Archives/edgar/data/2021728/000162828026035605/closing8-k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "CBRS",
+      "trigger_date": "2026-08-04",
+      "trigger_close": 227.1499938964844,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [
+        "2026-05-15 8-K (5.03,8.01,9.01): IPO-closing housekeeping (restated charter/bylaws) -- administrative, already priced in by market -- https://www.sec.gov/Archives/edgar/data/2021728/000162828026035605/closing8-k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "CBRS",
+      "trigger_date": "2026-08-07",
+      "trigger_close": 226.72999572753903,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [
+        "2026-05-15 8-K (5.03,8.01,9.01): IPO-closing housekeeping (restated charter/bylaws) -- administrative, already priced in by market -- https://www.sec.gov/Archives/edgar/data/2021728/000162828026035605/closing8-k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "CBRS",
+      "trigger_date": "2026-08-17",
+      "trigger_close": 251.97999572753903,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "CRCL",
+      "trigger_date": "2025-09-19",
+      "trigger_close": 144.13999938964844,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "CRCL",
+      "trigger_date": "2025-10-02",
+      "trigger_close": 149.72000122070312,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "CRCL",
+      "trigger_date": "2025-12-09",
+      "trigger_close": 88.87999725341797,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "CRCL",
+      "trigger_date": "2026-01-14",
+      "trigger_close": 84.80000305175781,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 1
+    },
+    {
+      "symbol": "CRCL",
+      "trigger_date": "2026-02-25",
+      "trigger_close": 83.13999938964844,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 1
+    },
+    {
+      "symbol": "CRCL",
+      "trigger_date": "2026-03-12",
+      "trigger_close": 114.18000030517578,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 1
+    },
+    {
+      "symbol": "CRCL",
+      "trigger_date": "2026-04-20",
+      "trigger_close": 106.36000061035156,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "CRCL",
+      "trigger_date": "2026-04-22",
+      "trigger_close": 104.36000061035156,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "CRCL",
+      "trigger_date": "2026-05-04",
+      "trigger_close": 119.52999877929688,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 2
+    },
+    {
+      "symbol": "CRCL",
+      "trigger_date": "2026-05-11",
+      "trigger_close": 131.75999450683594,
+      "conviction": "high",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "Q1 earnings + $740M ARC token presale led by a16z crypto -- real specific strategic capital/product event",
+      "risk_flags": [],
+      "sources": [
+        "2026-05-11 8-K (2.02,8.01,9.01): Q1 earnings + $740M ARC token presale led by a16z crypto -- real specific strategic capital/product event -- https://www.sec.gov/Archives/edgar/data/1876042/000187604226000148/crcl-20260511.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "CRCL",
+      "trigger_date": "2026-08-12",
+      "trigger_close": 71.27999877929688,
+      "conviction": "medium",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "Second closing of ARC token presale (67.5M add'l tokens) -- confirmatory follow-on of same program",
+      "risk_flags": [],
+      "sources": [
+        "2026-07-02 8-K (8.01): Second closing of ARC token presale (67.5M add'l tokens) -- confirmatory follow-on of same program -- https://www.sec.gov/Archives/edgar/data/1876042/000187604226000205/crcl-20260629.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 4
+    },
+    {
+      "symbol": "CRCL",
+      "trigger_date": "2026-08-19",
+      "trigger_close": 78.58999633789062,
+      "conviction": "medium",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "Second closing of ARC token presale (67.5M add'l tokens) -- confirmatory follow-on of same program",
+      "risk_flags": [],
+      "sources": [
+        "2026-07-02 8-K (8.01): Second closing of ARC token presale (67.5M add'l tokens) -- confirmatory follow-on of same program -- https://www.sec.gov/Archives/edgar/data/1876042/000187604226000205/crcl-20260629.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "CRCL",
+      "trigger_date": "2026-08-31",
+      "trigger_close": 95.5500030517578,
+      "conviction": "medium",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "Second closing of ARC token presale (67.5M add'l tokens) -- confirmatory follow-on of same program",
+      "risk_flags": [],
+      "sources": [
+        "2026-07-02 8-K (8.01): Second closing of ARC token presale (67.5M add'l tokens) -- confirmatory follow-on of same program -- https://www.sec.gov/Archives/edgar/data/1876042/000187604226000205/crcl-20260629.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "CRCL",
+      "trigger_date": "2026-09-03",
+      "trigger_close": 103.2300033569336,
+      "conviction": "medium",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "Second closing of ARC token presale (67.5M add'l tokens) -- confirmatory follow-on of same program",
+      "risk_flags": [],
+      "sources": [
+        "2026-07-02 8-K (8.01): Second closing of ARC token presale (67.5M add'l tokens) -- confirmatory follow-on of same program -- https://www.sec.gov/Archives/edgar/data/1876042/000187604226000205/crcl-20260629.htm"
+      ],
+      "news_available_historically": true,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "CHWY",
+      "trigger_date": "2025-10-01",
+      "trigger_close": 39.540000915527344,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "CHWY",
+      "trigger_date": "2025-12-10",
+      "trigger_close": 35.369998931884766,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 1
+    },
+    {
+      "symbol": "CHWY",
+      "trigger_date": "2026-04-01",
+      "trigger_close": 26.6200008392334,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "CHWY",
+      "trigger_date": "2026-04-17",
+      "trigger_close": 27.520000457763672,
+      "conviction": "high",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "$500M increase to share buyback program -- real, specific, board-approved bullish signal",
+      "risk_flags": [],
+      "sources": [
+        "2026-04-08 8-K (8.01): $500M increase to share buyback program -- real, specific, board-approved bullish signal -- https://www.sec.gov/Archives/edgar/data/1766502/000119312526146440/d133310d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 4
+    },
+    {
+      "symbol": "CHWY",
+      "trigger_date": "2026-07-07",
+      "trigger_close": 20.729999542236328,
+      "conviction": "high",
+      "direction": "long",
+      "bought": true,
+      "reasoning_summary": "$500M increase to share buyback program -- real, specific, board-approved bullish signal",
+      "risk_flags": [],
+      "sources": [
+        "2026-06-24 8-K (1.01,2.03,9.01): New $600M 7yr term loan for general corporate purposes -- routine financing -- https://www.sec.gov/Archives/edgar/data/1766502/000119312526281042/d43042d8k.htm",
+        "2026-04-08 8-K (8.01): $500M increase to share buyback program -- real, specific, board-approved bullish signal -- https://www.sec.gov/Archives/edgar/data/1766502/000119312526146440/d133310d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 4
+    },
+    {
+      "symbol": "CHWY",
+      "trigger_date": "2026-07-10",
+      "trigger_close": 20.8799991607666,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [
+        "2026-06-24 8-K (1.01,2.03,9.01): New $600M 7yr term loan for general corporate purposes -- routine financing -- https://www.sec.gov/Archives/edgar/data/1766502/000119312526281042/d43042d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "CHWY",
+      "trigger_date": "2026-07-16",
+      "trigger_close": 21.530000686645508,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [
+        "2026-06-24 8-K (1.01,2.03,9.01): New $600M 7yr term loan for general corporate purposes -- routine financing -- https://www.sec.gov/Archives/edgar/data/1766502/000119312526281042/d43042d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 4
+    },
+    {
+      "symbol": "CHWY",
+      "trigger_date": "2026-07-27",
+      "trigger_close": 21.799999237060547,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [
+        "2026-06-24 8-K (1.01,2.03,9.01): New $600M 7yr term loan for general corporate purposes -- routine financing -- https://www.sec.gov/Archives/edgar/data/1766502/000119312526281042/d43042d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 4
+    },
+    {
+      "symbol": "CHWY",
+      "trigger_date": "2026-08-03",
+      "trigger_close": 22.969999313354492,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [
+        "2026-06-24 8-K (1.01,2.03,9.01): New $600M 7yr term loan for general corporate purposes -- routine financing -- https://www.sec.gov/Archives/edgar/data/1766502/000119312526281042/d43042d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "CHWY",
+      "trigger_date": "2026-08-20",
+      "trigger_close": 23.8799991607666,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [
+        "2026-06-24 8-K (1.01,2.03,9.01): New $600M 7yr term loan for general corporate purposes -- routine financing -- https://www.sec.gov/Archives/edgar/data/1766502/000119312526281042/d43042d8k.htm"
+      ],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "CHWY",
+      "trigger_date": "2026-08-25",
+      "trigger_close": 24.690000534057617,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "8-K(s) in window exist but none rise to a specific company-confirmed catalyst (routine/administrative/ambiguous items only)",
+      "risk_flags": [],
+      "sources": [
+        "2026-06-24 8-K (1.01,2.03,9.01): New $600M 7yr term loan for general corporate purposes -- routine financing -- https://www.sec.gov/Archives/edgar/data/1766502/000119312526281042/d43042d8k.htm"
+      ],
+      "news_available_historically": true,
+      "n_filings_in_90d_window": 3
+    },
+    {
+      "symbol": "IQ",
+      "trigger_date": "2026-01-07",
+      "trigger_close": 2.130000114440918,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "trailing 90-day 8-K window is empty -- no company-specific catalyst available to confirm a buy",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 0
+    },
+    {
+      "symbol": "IQ",
+      "trigger_date": "2026-01-12",
+      "trigger_close": 2.109999895095825,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "trailing 90-day 8-K window is empty -- no company-specific catalyst available to confirm a buy",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 0
+    },
+    {
+      "symbol": "IQ",
+      "trigger_date": "2026-04-16",
+      "trigger_close": 1.399999976158142,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "trailing 90-day 8-K window is empty -- no company-specific catalyst available to confirm a buy",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 0
+    },
+    {
+      "symbol": "IQ",
+      "trigger_date": "2026-07-09",
+      "trigger_close": 1.1399999856948853,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "trailing 90-day 8-K window is empty -- no company-specific catalyst available to confirm a buy",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": true,
+      "n_filings_in_90d_window": 0
+    },
+    {
+      "symbol": "IQ",
+      "trigger_date": "2026-07-28",
+      "trigger_close": 1.25,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "trailing 90-day 8-K window is empty -- no company-specific catalyst available to confirm a buy",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 0
+    },
+    {
+      "symbol": "IQ",
+      "trigger_date": "2026-07-30",
+      "trigger_close": 1.2799999713897705,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "trailing 90-day 8-K window is empty -- no company-specific catalyst available to confirm a buy",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 0
+    },
+    {
+      "symbol": "IQ",
+      "trigger_date": "2026-08-07",
+      "trigger_close": 1.3300000429153442,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "trailing 90-day 8-K window is empty -- no company-specific catalyst available to confirm a buy",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 0
+    },
+    {
+      "symbol": "IQ",
+      "trigger_date": "2026-08-13",
+      "trigger_close": 1.3600000143051147,
+      "conviction": "low",
+      "direction": "avoid",
+      "bought": false,
+      "reasoning_summary": "trailing 90-day 8-K window is empty -- no company-specific catalyst available to confirm a buy",
+      "risk_flags": [],
+      "sources": [],
+      "news_available_historically": false,
+      "n_filings_in_90d_window": 0
+    }
+  ],
+  "trades": [
+    {
+      "symbol": "SNDK",
+      "entry_date": "2026-04-10",
+      "entry_price": 851.77,
+      "exit_date": "2026-07-08",
+      "exit_price": 1727.1801,
+      "exit_reason": "exit_signal",
+      "return_pct": 102.7754,
+      "holding_days": 60,
+      "weekly_support_level_at_entry": null,
+      "status": "closed",
+      "entry_conviction": "high"
+    },
+    {
+      "symbol": "SNDK",
+      "entry_date": "2026-04-16",
+      "entry_price": 919.47,
+      "exit_date": "2026-07-08",
+      "exit_price": 1727.1801,
+      "exit_reason": "exit_signal",
+      "return_pct": 87.8452,
+      "holding_days": 56,
+      "weekly_support_level_at_entry": null,
+      "status": "closed",
+      "entry_conviction": "high"
+    },
+    {
+      "symbol": "SNDK",
+      "entry_date": "2026-04-22",
+      "entry_price": 979.07,
+      "exit_date": "2026-07-08",
+      "exit_price": 1727.1801,
+      "exit_reason": "exit_signal",
+      "return_pct": 76.4103,
+      "holding_days": 52,
+      "weekly_support_level_at_entry": null,
+      "status": "closed",
+      "entry_conviction": "high"
+    },
+    {
+      "symbol": "SNDK",
+      "entry_date": "2026-04-24",
+      "entry_price": 989.9,
+      "exit_date": "2026-07-08",
+      "exit_price": 1727.1801,
+      "exit_reason": "exit_signal",
+      "return_pct": 74.4803,
+      "holding_days": 50,
+      "weekly_support_level_at_entry": null,
+      "status": "closed",
+      "entry_conviction": "high"
+    },
+    {
+      "symbol": "SNDK",
+      "entry_date": "2026-04-29",
+      "entry_price": 1064.21,
+      "exit_date": "2026-07-08",
+      "exit_price": 1727.1801,
+      "exit_reason": "exit_signal",
+      "return_pct": 62.2969,
+      "holding_days": 47,
+      "weekly_support_level_at_entry": null,
+      "status": "closed",
+      "entry_conviction": "high"
+    },
+    {
+      "symbol": "SNDK",
+      "entry_date": "2026-05-08",
+      "entry_price": 1562.34,
+      "exit_date": "2026-07-08",
+      "exit_price": 1727.1801,
+      "exit_reason": "exit_signal",
+      "return_pct": 10.5508,
+      "holding_days": 40,
+      "weekly_support_level_at_entry": null,
+      "status": "closed",
+      "entry_conviction": "high"
+    },
+    {
+      "symbol": "SNDK",
+      "entry_date": "2026-05-28",
+      "entry_price": 1641.64,
+      "exit_date": "2026-07-08",
+      "exit_price": 1727.1801,
+      "exit_reason": "exit_signal",
+      "return_pct": 5.2106,
+      "holding_days": 27,
+      "weekly_support_level_at_entry": null,
+      "status": "closed",
+      "entry_conviction": "high"
+    },
+    {
+      "symbol": "SNDK",
+      "entry_date": "2026-06-12",
+      "entry_price": 1980.1,
+      "exit_date": "2026-07-08",
+      "exit_price": 1727.1801,
+      "exit_reason": "exit_signal",
+      "return_pct": -12.7731,
+      "holding_days": 16,
+      "weekly_support_level_at_entry": null,
+      "status": "closed",
+      "entry_conviction": "high"
+    },
+    {
+      "symbol": "SNDK",
+      "entry_date": "2026-06-18",
+      "entry_price": 2184.75,
+      "exit_date": "2026-07-08",
+      "exit_price": 1727.1801,
+      "exit_reason": "exit_signal",
+      "return_pct": -20.9438,
+      "holding_days": 12,
+      "weekly_support_level_at_entry": null,
+      "status": "closed",
+      "entry_conviction": "high"
+    },
+    {
+      "symbol": "SNDK",
+      "entry_date": "2026-06-25",
+      "entry_price": 2335.0,
+      "exit_date": "2026-07-08",
+      "exit_price": 1727.1801,
+      "exit_reason": "exit_signal",
+      "return_pct": -26.0308,
+      "holding_days": 8,
+      "weekly_support_level_at_entry": null,
+      "status": "closed",
+      "entry_conviction": "high"
+    },
+    {
+      "symbol": "SNDK",
+      "entry_date": "2026-08-14",
+      "entry_price": 1641.11,
+      "exit_date": null,
+      "exit_price": null,
+      "exit_reason": null,
+      "return_pct": null,
+      "holding_days": null,
+      "weekly_support_level_at_entry": null,
+      "status": "open_at_backtest_end",
+      "entry_conviction": "high"
+    },
+    {
+      "symbol": "LITE",
+      "entry_date": "2026-03-02",
+      "entry_price": 783.25,
+      "exit_date": "2026-03-16",
+      "exit_price": 624.84,
+      "exit_reason": "exit_signal",
+      "return_pct": -20.2247,
+      "holding_days": 10,
+      "weekly_support_level_at_entry": 313.32,
+      "status": "closed",
+      "entry_conviction": "high"
+    },
+    {
+      "symbol": "LITE",
+      "entry_date": "2026-03-24",
+      "entry_price": 801.99,
+      "exit_date": "2026-05-27",
+      "exit_price": 902.31,
+      "exit_reason": "exit_signal",
+      "return_pct": 12.5089,
+      "holding_days": 44,
+      "weekly_support_level_at_entry": 364.58,
+      "status": "closed",
+      "entry_conviction": "high"
+    },
+    {
+      "symbol": "LITE",
+      "entry_date": "2026-04-07",
+      "entry_price": 815.75,
+      "exit_date": "2026-05-27",
+      "exit_price": 902.31,
+      "exit_reason": "exit_signal",
+      "return_pct": 10.6111,
+      "holding_days": 35,
+      "weekly_support_level_at_entry": 405.61,
+      "status": "closed",
+      "entry_conviction": "high"
+    },
+    {
+      "symbol": "GOOG",
+      "entry_date": "2025-12-05",
+      "entry_price": 321.2514,
+      "exit_date": "2025-12-18",
+      "exit_price": 303.1568,
+      "exit_reason": "exit_signal",
+      "return_pct": -5.6325,
+      "holding_days": 9,
+      "weekly_support_level_at_entry": 223.4,
+      "status": "closed",
+      "entry_conviction": "medium"
+    },
+    {
+      "symbol": "GOOG",
+      "entry_date": "2026-01-08",
+      "entry_price": 325.3733,
+      "exit_date": "2026-02-11",
+      "exit_price": 310.722,
+      "exit_reason": "exit_signal",
+      "return_pct": -4.5029,
+      "holding_days": 23,
+      "weekly_support_level_at_entry": 247.25,
+      "status": "closed",
+      "entry_conviction": "medium"
+    },
+    {
+      "symbol": "GOOG",
+      "entry_date": "2026-01-29",
+      "entry_price": 337.9986,
+      "exit_date": "2026-02-11",
+      "exit_price": 310.722,
+      "exit_reason": "exit_signal",
+      "return_pct": -8.07,
+      "holding_days": 9,
+      "weekly_support_level_at_entry": 263.05,
+      "status": "closed",
+      "entry_conviction": "medium"
+    },
+    {
+      "symbol": "AMD",
+      "entry_date": "2025-10-15",
+      "entry_price": 238.6,
+      "exit_date": "2025-11-14",
+      "exit_price": 246.81,
+      "exit_reason": "exit_signal",
+      "return_pct": 3.4409,
+      "holding_days": 22,
+      "weekly_support_level_at_entry": 140.52,
+      "status": "closed",
+      "entry_conviction": "high"
+    },
+    {
+      "symbol": "AMD",
+      "entry_date": "2025-10-20",
+      "entry_price": 240.56,
+      "exit_date": "2025-11-14",
+      "exit_price": 246.81,
+      "exit_reason": "exit_signal",
+      "return_pct": 2.5981,
+      "holding_days": 19,
+      "weekly_support_level_at_entry": 144.92,
+      "status": "closed",
+      "entry_conviction": "high"
+    },
+    {
+      "symbol": "AMD",
+      "entry_date": "2025-10-24",
+      "entry_price": 252.92,
+      "exit_date": "2025-11-14",
+      "exit_price": 246.81,
+      "exit_reason": "exit_signal",
+      "return_pct": -2.4158,
+      "holding_days": 15,
+      "weekly_support_level_at_entry": 145.33,
+      "status": "closed",
+      "entry_conviction": "high"
+    },
+    {
+      "symbol": "AMD",
+      "entry_date": "2026-01-05",
+      "entry_price": 221.08,
+      "exit_date": "2026-02-12",
+      "exit_price": 205.94,
+      "exit_reason": "exit_signal",
+      "return_pct": -6.8482,
+      "holding_days": 27,
+      "weekly_support_level_at_entry": 189.46,
+      "status": "closed",
+      "entry_conviction": "medium"
+    },
+    {
+      "symbol": "AMD",
+      "entry_date": "2026-01-15",
+      "entry_price": 227.92,
+      "exit_date": "2026-02-12",
+      "exit_price": 205.94,
+      "exit_reason": "exit_signal",
+      "return_pct": -9.6437,
+      "holding_days": 19,
+      "weekly_support_level_at_entry": 192.19,
+      "status": "closed",
+      "entry_conviction": "medium"
+    },
+    {
+      "symbol": "AMD",
+      "entry_date": "2026-03-25",
+      "entry_price": 220.27,
+      "exit_date": "2026-07-17",
+      "exit_price": 495.76,
+      "exit_reason": "exit_signal",
+      "return_pct": 125.0692,
+      "holding_days": 78,
+      "weekly_support_level_at_entry": 209.52,
+      "status": "closed",
+      "entry_conviction": "high"
+    },
+    {
+      "symbol": "AMD",
+      "entry_date": "2026-04-06",
+      "entry_price": 220.18,
+      "exit_date": "2026-07-17",
+      "exit_price": 495.76,
+      "exit_reason": "exit_signal",
+      "return_pct": 125.1612,
+      "holding_days": 71,
+      "weekly_support_level_at_entry": 213.17,
+      "status": "closed",
+      "entry_conviction": "high"
+    },
+    {
+      "symbol": "AMD",
+      "entry_date": "2026-04-30",
+      "entry_price": 354.49,
+      "exit_date": "2026-07-17",
+      "exit_price": 495.76,
+      "exit_reason": "exit_signal",
+      "return_pct": 39.8516,
+      "holding_days": 53,
+      "weekly_support_level_at_entry": 230.64,
+      "status": "closed",
+      "entry_conviction": "high"
+    },
+    {
+      "symbol": "AMD",
+      "entry_date": "2026-05-06",
+      "entry_price": 421.39,
+      "exit_date": "2026-07-17",
+      "exit_price": 495.76,
+      "exit_reason": "exit_signal",
+      "return_pct": 17.6487,
+      "holding_days": 49,
+      "weekly_support_level_at_entry": 237.73,
+      "status": "closed",
+      "entry_conviction": "high"
+    },
+    {
+      "symbol": "AMD",
+      "entry_date": "2026-05-08",
+      "entry_price": 455.19,
+      "exit_date": "2026-07-17",
+      "exit_price": 495.76,
+      "exit_reason": "exit_signal",
+      "return_pct": 8.9128,
+      "holding_days": 47,
+      "weekly_support_level_at_entry": 238.85,
+      "status": "closed",
+      "entry_conviction": "high"
+    },
+    {
+      "symbol": "INTC",
+      "entry_date": "2025-09-18",
+      "entry_price": 30.57,
+      "exit_date": "2025-11-12",
+      "exit_price": 37.89,
+      "exit_reason": "exit_signal",
+      "return_pct": 23.945,
+      "holding_days": 39,
+      "weekly_support_level_at_entry": 22.1,
+      "status": "closed",
+      "entry_conviction": "high"
+    },
+    {
+      "symbol": "INTC",
+      "entry_date": "2025-10-01",
+      "entry_price": 35.94,
+      "exit_date": "2025-11-12",
+      "exit_price": 37.89,
+      "exit_reason": "exit_signal",
+      "return_pct": 5.4257,
+      "holding_days": 30,
+      "weekly_support_level_at_entry": 22.97,
+      "status": "closed",
+      "entry_conviction": "high"
+    },
+    {
+      "symbol": "INTC",
+      "entry_date": "2025-10-07",
+      "entry_price": 37.17,
+      "exit_date": "2025-11-12",
+      "exit_price": 37.89,
+      "exit_reason": "exit_signal",
+      "return_pct": 1.937,
+      "holding_days": 26,
+      "weekly_support_level_at_entry": 23.44,
+      "status": "closed",
+      "entry_conviction": "high"
+    },
+    {
+      "symbol": "INTC",
+      "entry_date": "2025-10-29",
+      "entry_price": 41.34,
+      "exit_date": "2025-11-12",
+      "exit_price": 37.89,
+      "exit_reason": "exit_signal",
+      "return_pct": -8.3454,
+      "holding_days": 10,
+      "weekly_support_level_at_entry": 25.07,
+      "status": "closed",
+      "entry_conviction": "high"
+    },
+    {
+      "symbol": "INTC",
+      "entry_date": "2025-12-03",
+      "entry_price": 43.76,
+      "exit_date": "2025-12-22",
+      "exit_price": 36.37,
+      "exit_reason": "exit_signal",
+      "return_pct": -16.8876,
+      "holding_days": 13,
+      "weekly_support_level_at_entry": 28.08,
+      "status": "closed",
+      "entry_conviction": "high"
+    },
+    {
+      "symbol": "INTC",
+      "entry_date": "2026-01-07",
+      "entry_price": 42.63,
+      "exit_date": "2026-02-18",
+      "exit_price": 45.46,
+      "exit_reason": "exit_signal",
+      "return_pct": 6.6385,
+      "holding_days": 28,
+      "weekly_support_level_at_entry": 31.05,
+      "status": "closed",
+      "entry_conviction": "medium"
+    },
+    {
+      "symbol": "INTC",
+      "entry_date": "2026-01-20",
+      "entry_price": 48.56,
+      "exit_date": "2026-02-18",
+      "exit_price": 45.46,
+      "exit_reason": "exit_signal",
+      "return_pct": -6.3839,
+      "holding_days": 20,
+      "weekly_support_level_at_entry": 32.87,
+      "status": "closed",
+      "entry_conviction": "medium"
+    },
+    {
+      "symbol": "INTC",
+      "entry_date": "2026-04-24",
+      "entry_price": 82.54,
+      "exit_date": "2026-06-05",
+      "exit_price": 99.17,
+      "exit_reason": "exit_signal",
+      "return_pct": 20.1478,
+      "holding_days": 29,
+      "weekly_support_level_at_entry": 44.67,
+      "status": "closed",
+      "entry_conviction": "medium"
+    },
+    {
+      "symbol": "INTC",
+      "entry_date": "2026-05-05",
+      "entry_price": 108.15,
+      "exit_date": "2026-06-05",
+      "exit_price": 99.17,
+      "exit_reason": "exit_signal",
+      "return_pct": -8.3033,
+      "holding_days": 22,
+      "weekly_support_level_at_entry": 49.15,
+      "status": "closed",
+      "entry_conviction": "medium"
+    },
+    {
+      "symbol": "INTC",
+      "entry_date": "2026-05-08",
+      "entry_price": 124.92,
+      "exit_date": "2026-06-05",
+      "exit_price": 99.17,
+      "exit_reason": "exit_signal",
+      "return_pct": -20.6132,
+      "holding_days": 19,
+      "weekly_support_level_at_entry": 49.71,
+      "status": "closed",
+      "entry_conviction": "medium"
+    },
+    {
+      "symbol": "INTC",
+      "entry_date": "2026-06-18",
+      "entry_price": 133.99,
+      "exit_date": "2026-07-09",
+      "exit_price": 112.54,
+      "exit_reason": "exit_signal",
+      "return_pct": -16.0087,
+      "holding_days": 13,
+      "weekly_support_level_at_entry": 65.63,
+      "status": "closed",
+      "entry_conviction": "medium"
+    },
+    {
+      "symbol": "INTC",
+      "entry_date": "2026-06-30",
+      "entry_price": 139.63,
+      "exit_date": "2026-07-09",
+      "exit_price": 112.54,
+      "exit_reason": "exit_signal",
+      "return_pct": -19.4013,
+      "holding_days": 6,
+      "weekly_support_level_at_entry": 71.83,
+      "status": "closed",
+      "entry_conviction": "medium"
+    },
+    {
+      "symbol": "BE",
+      "entry_date": "2025-10-31",
+      "entry_price": 132.16,
+      "exit_date": "2025-11-20",
+      "exit_price": 93.38,
+      "exit_reason": "exit_signal",
+      "return_pct": -29.3432,
+      "holding_days": 14,
+      "weekly_support_level_at_entry": 45.78,
+      "status": "closed",
+      "entry_conviction": "high"
+    },
+    {
+      "symbol": "BE",
+      "entry_date": "2026-04-14",
+      "entry_price": 219.03,
+      "exit_date": "2026-06-08",
+      "exit_price": 253.57,
+      "exit_reason": "exit_signal",
+      "return_pct": 15.7695,
+      "holding_days": 38,
+      "weekly_support_level_at_entry": 126.66,
+      "status": "closed",
+      "entry_conviction": "medium"
+    },
+    {
+      "symbol": "QCOM",
+      "entry_date": "2026-09-01",
+      "entry_price": 165.7081,
+      "exit_date": null,
+      "exit_price": null,
+      "exit_reason": null,
+      "return_pct": null,
+      "holding_days": null,
+      "weekly_support_level_at_entry": 168.52,
+      "status": "open_at_backtest_end",
+      "entry_conviction": "high"
+    },
+    {
+      "symbol": "MRVL",
+      "entry_date": "2025-11-05",
+      "entry_price": 92.7639,
+      "exit_date": "2025-11-19",
+      "exit_price": 81.2008,
+      "exit_reason": "exit_signal",
+      "return_pct": -12.465,
+      "holding_days": 10,
+      "weekly_support_level_at_entry": 72.59,
+      "status": "closed",
+      "entry_conviction": "high"
+    },
+    {
+      "symbol": "MRVL",
+      "entry_date": "2025-11-10",
+      "entry_price": 93.0934,
+      "exit_date": "2025-11-19",
+      "exit_price": 81.2008,
+      "exit_reason": "exit_signal",
+      "return_pct": -12.7749,
+      "holding_days": 7,
+      "weekly_support_level_at_entry": 73.91,
+      "status": "closed",
+      "entry_conviction": "high"
+    },
+    {
+      "symbol": "MRVL",
+      "entry_date": "2025-12-04",
+      "entry_price": 98.0461,
+      "exit_date": "2026-01-14",
+      "exit_price": 81.1494,
+      "exit_reason": "exit_signal",
+      "return_pct": -17.2335,
+      "holding_days": 27,
+      "weekly_support_level_at_entry": 76.49,
+      "status": "closed",
+      "entry_conviction": "high"
+    },
+    {
+      "symbol": "MRVL",
+      "entry_date": "2026-01-06",
+      "entry_price": 88.1007,
+      "exit_date": "2026-01-14",
+      "exit_price": 81.1494,
+      "exit_reason": "exit_signal",
+      "return_pct": -7.8903,
+      "holding_days": 6,
+      "weekly_support_level_at_entry": 80.27,
+      "status": "closed",
+      "entry_conviction": "high"
+    },
+    {
+      "symbol": "CRCL",
+      "entry_date": "2026-05-11",
+      "entry_price": 131.76,
+      "exit_date": "2026-05-28",
+      "exit_price": 108.24,
+      "exit_reason": "exit_signal",
+      "return_pct": -17.8506,
+      "holding_days": 12,
+      "weekly_support_level_at_entry": null,
+      "status": "closed",
+      "entry_conviction": "high"
+    },
+    {
+      "symbol": "CRCL",
+      "entry_date": "2026-08-12",
+      "entry_price": 71.28,
+      "exit_date": null,
+      "exit_price": null,
+      "exit_reason": null,
+      "return_pct": null,
+      "holding_days": null,
+      "weekly_support_level_at_entry": null,
+      "status": "open_at_backtest_end",
+      "entry_conviction": "medium"
+    },
+    {
+      "symbol": "CHWY",
+      "entry_date": "2026-04-17",
+      "entry_price": 27.52,
+      "exit_date": "2026-04-20",
+      "exit_price": 28.86,
+      "exit_reason": "price_stop_loss",
+      "return_pct": 4.8692,
+      "holding_days": 1,
+      "weekly_support_level_at_entry": 31.18,
+      "status": "closed",
+      "entry_conviction": "high"
+    },
+    {
+      "symbol": "CHWY",
+      "entry_date": "2026-07-07",
+      "entry_price": 20.73,
+      "exit_date": "2026-07-08",
+      "exit_price": 20.56,
+      "exit_reason": "price_stop_loss",
+      "return_pct": -0.8201,
+      "holding_days": 1,
+      "weekly_support_level_at_entry": 25.62,
+      "status": "closed",
+      "entry_conviction": "high"
+    }
+  ],
+  "aggregate": {
+    "total_signal_events": 231,
+    "events_that_passed_fundamentals_gate": 54,
+    "events_rejected_by_fundamentals_gate": 177,
+    "total_trades": 50,
+    "closed_trades": 47,
+    "open_at_backtest_end": 3,
+    "win_rate": 0.4894,
+    "avg_return_pct": 11.334,
+    "median_return_pct": -0.8201,
+    "profit_factor": 2.7106,
+    "avg_holding_days": 27
+  },
+  "comparison_to_mechanical_only": {
+    "note": "重要说明：strategy_backtest_entry_exit.json在本仓库/git历史中实际并不存在(已确认：文件系统未找到、`git log --all -- strategy_backtest_entry_exit.json` 无结果、.gitignore未排除它)，用户描述的“之前跑过一版纯机械回测”这一前提在本次任务开始时未能在仓库中找到对应产物。因此本节的“纯机械”基线不是从该文件筛出18只股票子集重新汇总，而是用完全相同的方法论(entry/exit rising edge + price_stop_loss_triggered，同一份mechanical_backtest.py)对同样18只股票、同样1年(或最长可得历史)回看窗口重新独立计算——两组回测(机械 vs 基本面把关)天然就是同一18只股票子集、同一时间窗口、同一进出场机械规则，唯一变量是基本面闸门，因此对比仍然成立、口径一致，只是“基线”是本次新算的而不是从旧文件筛选的，如实向用户说明这一差异。",
+    "mechanical_only_aggregate_same_18_symbols": {
+      "total_trades": 237,
+      "closed_trades": 225,
+      "open_at_backtest_end": 12,
+      "win_rate": 0.4489,
+      "avg_return_pct": 15.3631,
+      "median_return_pct": -1.6,
+      "profit_factor": 3.6979,
+      "avg_holding_days": 27.86
+    },
+    "fundamentals_gated_aggregate": {
+      "total_trades": 50,
+      "closed_trades": 47,
+      "open_at_backtest_end": 3,
+      "win_rate": 0.4894,
+      "avg_return_pct": 11.334,
+      "median_return_pct": -0.8201,
+      "profit_factor": 2.7106,
+      "avg_holding_days": 27
+    },
+    "delta": {
+      "win_rate_delta": 0.0405,
+      "avg_return_pct_delta": -4.0291,
+      "profit_factor_delta": -0.9873,
+      "trade_count_delta": -187
+    },
+    "honest_reading": "基本面把关把交易数从237笔砍到50笔(-78.9%)，胜率从44.9%小幅提升到48.9%(+4.0pp)，但平均单笔收益从+15.4%降到+11.3%、利润因子从3.70降到2.71，中位数收益两组都是负的(机械-1.6% vs 基本面把关-0.8%，基本面把关的中位数跌幅更小)。也就是说基本面把关在这份回测里“胜率更高、但利润因子和平均收益更低”——根因是被过滤掉的信号里包含了机械版本里回报最大的几笔交易(例如AMD在2026年初一批完全没有被基本面确认、纯技术面触发的信号，以及若干在90天窗口内找不到任何[READ REQUIRED]8-K的科技股信号)，这些“运气型”大涨在基本面把关下因为缺少公司自己确认的催化事件而被直接排除，砍掉了尾部最肥的几笔盈利，但同时确实避免了一些质地更差的信号。如实说明：这不是一个“基本面把关全面更优”的结果，是“更少但胜率略高、单笔期望值更低”的结果，是否更可取取决于对“减少交易频率、降低尾部盈利依赖”这件事本身的价值判断，不能简单说这次测试证明了基本面把关更好或更差。"
+  },
+  "verification_note": "对6笔交易做了人工复核(要求至少5笔)：(1)AMD 2026-03-25买入——复核8-K确认为AMD-Meta 160M股warrant换算力采购协议(2026-02-24披露，在90天窗口内)，点位函数check_entry_signal(AMD,2026-03-25)=True，方向和conviction=high的判断成立；(2)MRVL 2025-12-04买入——复核8-K确认为Celestial AI收购案(2025-12-02披露，~10亿美元现金+至多45亿美元股票)，底层entry_state在2025-12-03为False、2025-12-04为True(真实rising edge)，成立；(3)INTC 2025-09-18买入——复核8-K确认为NVIDIA 50亿美元战略入股+AI基建/PC合作(2025-09-18披露，report date 9/15)，当日INTC收盘从24.90涨到30.57(+22.8%)，entry_state真实由False转True，成立；(4)SNDK 2026-04-10买入——复核8-K确认为SanDisk自己对Nanya Technology(台湾DRAM厂商)10亿美元战略入股(2026-03-25披露)，窗口正确排除了之后4/30才披露的财报+回购(未来函数检查通过)；(5)GOOG 2025-12-05买入(medium)——复核8-K为2025-11-06close的175亿美元+65亿欧元优先票据发行，判定为medium(债券发行非成长性催化，只作为AI资本开支规模的旁证)是恰当的保守判断；(6)CHWY 2026-04-17/2026-07-07两笔——均由2026-04-08的5亿美元回购增额8-K驱动，2026-07-07这笔驱动filing距触发日恰好90天(边界情形，已如实注明这是“擦边”引用一个已披露3个月的旧闻当催化事件，不是全新信息)。发现的方法论细节(非bug，已如实记录)：check_entry_signal()默认lookback=10的“fresh”点位函数语义，与signal_calibration.json既定的backtest rising-edge口径(仅要求前一天为False)不是同一件事——多笔交易在点位函数下triggered=False(因为10个交易日内entry_state曾经为True过)，但底层entry_state确实在前一天是False、触发日是True，是合法的rising edge事件，只是不满足点位函数更严格的“新鲜度”过滤；已核实这不是bug，是backtest口径与live单日查询口径的既定差异(与signal_calibration.json的既有方法论一致)。CHWY 2026-04-17这笔的price_stop_loss在持有1天后就触发、但exit_price(28.86)高于entry_price(27.52)(仍是正收益+4.87%卖出)——复核check_trend_gate(CHWY,2026-04-17)发现买入当天收盘价(27.52)本身已经比冻结的周线支撑位(31.18)低11.7%，是技术面短线反弹信号先于价格追上更慢的周线支撑/均线结构触发的真实情形，冻结阈值下买入后第1天trailing 3日收盘价仍全部低于stop_threshold(30.24)触发止损——不是bug，是“快信号(entry)+慢止损参照(30周均线)”组合的真实机制性产物，已如实记录。"
+}

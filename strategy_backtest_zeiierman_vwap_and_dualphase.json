@@ -1,0 +1,615 @@
+{
+  "built_date": "2026-09-09",
+  "source": "两个TradingView 'strategy'类脚本：(1) Dynamic Swing Anchored VWAP STRAT (作者 Zeiierman/PineIndicators) (2) Dual-Phase Trend Regime Strategy (作者 Zeiierman X PineIndicators)。均为开源脚本，但WebFetch只读到营销性文字描述，未获取到Pine Source code标签页的实际代码。",
+  "methodology_note": "重要声明：本文件测试的两个策略(Dynamic Swing Anchored VWAP STRAT / Dual-Phase Trend Regime Strategy，均为TradingView作者Zeiierman/PineIndicators、Zeiierman X PineIndicators发布的开源'strategy'类脚本)，我们没有拿到Pine源码文本——WebFetch只读到了脚本主页的营销性文字描述，读不到Source code标签页的实际代码。以下两个策略的全部信号定义、参数选择、指标代理，都是我们基于官方文字描述自己设计的合理操作化实现，不是对作者原始Pine代码的复刻，数值结果不能被解读为'这就是作者策略的真实表现'，只能解读为'一种忠于文字描述核心机制的、我们自己设计的实现方案在186只股票上的表现'。\n\n共用基础设施(与strategy_backtest_entry_exit.json/strategy_backtest_pattern_signal_entries.json完全对齐，不自创新方法论)：标的池=186只股票(从strategy_backtest_entry_exit.json的industries.*.trades[].symbol去重程序化提取；186个symbol里DD/RPRX/SF三个yfinance返回空数据「possibly delisted」，实际参与回测183只，其余183只全部成功获取histoy)。买入=触发当天(rising edge)收盘价满仓，卖出=exit_rise(rising edge)或price_stop_loss(如该变体启用)任一先触发，同一股票同时最多1仓，独立模拟不同股票。窗口=每只股票最后一个可用交易日往前推365个日历日的交易日窗口，窗口起点一律空仓开始(窗口起点之前已形成的state不继承为自动持仓)，窗口结束仍持仓的头寸不计入trades/aggregate统计，只报告open_positions_at_window_end计数。holding_days=exit_date与entry_date的日历天数差。price_stop_loss统一复用当前live配置(3%缓冲/5天确认，即strategy_backtest_diagnostics.json validated的variant_3pct_5day，周线支撑位=max(最近26周收盘的最低点,最近30周收盘均值))；因为逐日调用technical_signals.check_trend_gate()对186只股票×365天窗口要46,500+次调用、实测约17ms/次(≈13分钟)，这次改用自己写的向量化版本compute_price_stop_loss_vectorized()一次性算完(全程数秒)，但先用它在5只股票×8个随机日期(共40个抽样点)上跟真实check_trend_gate()逐点比对support_level和price_stop_loss_triggered，40/40完全一致才采信，具体做法：候选'当周'的支撑位计算里，未走完的当前周只用截至该日的收盘价(不是整周最终收盘)代表，避免用到该周未来几天的数据——这是因果安全的核心处理，思路上跟strategy_backtest_chande_kroll_and_swing_pivot.json机制E对摆动点的因果安全处理是同一套逻辑(候选点在其确认窗口完整走完之前不可用)。\n\n策略1(Dynamic Swing Anchored VWAP STRAT)操作化：文字描述说用ta.highestbars/ta.lowestbars(回溯周期prd)识别摆动高低点，结构翻多/翻空触发entry/exit，VWAP从翻转点重新锚定但脚本本身入场/出场判定只依赖'结构翻转'这一个条件——VWAP在原描述里更像是可视化/参考层，不是入场判定本身用到的穿越条件，所以这次操作化没有实际计算锚定VWAP序列(它不参与entry_rise/exit_rise判定，算出来也不会改变任何一笔交易的开平仓时点)，如果之后想把'价格穿越锚定VWAP'当额外过滤条件测试，需要另外单独说明和测试。摆动点识别没有用ta.highestbars/lowestbars的纯回溯(backward-only)语义，改用了technical_signals._local_maxima()/_local_minima()风格的居中滚动窗口(2*order+1，本次prd直接1:1映射为order)——这是我们的主动选择而非对原文的最贴近复刻：居中窗口需要prd根K线之后才能'确认'一个摆动点(而不是当天立即确认)，比纯回溯版本更保守也更不容易因单日插针而反复闪烁，且是这个代码库里摆动点检测已经用过、已经验证过因果安全处理方式的现成写法，复用它比重新实现backward-only版本风险更低。'结构翻多'=最近一个已确认摆动低点的Low，高于前一个已确认摆动低点的Low(higher low)；'结构翻空'=镜像(最近确认摆动高点的High，低于前一个确认摆动高点的High)。entry_rise/exit_rise=这两个状态的上升沿。prd测{5,10,20}三档，每档测『无price_stop_loss』和『+3%/5天price_stop_loss』两个变体，共6组。\n\n策略2(Dual-Phase Trend Regime Strategy)操作化：文字描述说用收益率标准差算波动率、跟其自身中位数比分成高/低波动两态，高波动态切到更快的Fast Oscillator、低波动态切到更平滑的Slow Oscillator，用当前生效那个振荡器的方向变化(而不是绝对阈值)出entry/exit。我们的具体实现：波动率=收益率过去N日标准差(N测{20,60}两档)；'自身中位数'用该股票过去504个交易日(约2年，若历史不足504天则用截至当天已有的全部值，min_periods=60)的滚动中位数，全程只用截至当天的历史(因果安全，不用未来数据定义中位数)；Fast Oscillator代理=5日ROC((close_t-close_t-5)/close_t-5)，Slow Oscillator代理=25日ROC——这是我们自己选的一组'快/慢'代理，不是对原脚本任何具体公式的复刻，选ROC是因为zero-crossing='方向变化'这个语义最直接、也最容易手工复核(两个收盘价相除就能验证，适配这次的验证要求)；Fast/Slow的具体周期(5/25)在两个N档之间保持不变，只有波动率判态用的N在变，因为'多快切换判断高低波动'和'振荡器本身多快'在原描述里是两个概念，没有理由绑定成同一个数字。effective_oscillator(t)=vol(t)>median_vol(t)时取fast_osc(t)，否则取slow_osc(t)——注意这个『当前生效序列』是逐日现挑的拼接序列，如果前一天和今天恰好用的是不同的振荡器(比如今天从低波动切到高波动)，'上升沿'比较的是两个不同振荡器在相邻两天的值，这是对原描述'切换后生效的那个振荡器的方向变化产生信号'最直接的字面实现，不是我们额外加的巧合。entry_rise=effective_oscillator从<=0变>0；exit_rise=从>=0变<0。N测{20,60}两档，各测『无price_stop_loss』和『+3%/5天price_stop_loss』两个变体，共4组。\n\n验证：对每个策略最终判定'较优'的参数组合(策略1=prd5_with_price_stop_loss，策略2=voln20_with_price_stop_loss)各独立抽5笔交易，用完全独立重写的代码(不复用回测本身的向量化实现，策略1用显式切片+argmin/argmax重算局部极值和确认逻辑，策略2用numpy在原始收盘价上手动重算rolling std/median/ROC，price_stop_loss退出的复核直接调用真实的check_trend_gate()而不是我们自己的向量化版本)逐笔重算entry/exit判定条件是否真的满足，见verification字段，10/10全部通过。",
+  "universe": "186只股票，从strategy_backtest_entry_exit.json的industries.*.trades[].symbol去重程序化提取；其中DD/RPRX/SF三个yfinance无数据(possibly delisted)，实际参与回测183只",
+  "existing_baseline_for_comparison": {
+    "source": "strategy_backtest_diagnostics.json hypothesis_2_stop_loss_parameter_sweep.variant_3pct_5day (current live price_stop_loss config: 3% buffer / 5-day confirm)",
+    "total_trades": 1117,
+    "win_rate": 0.4091,
+    "profit_factor": 1.8578,
+    "avg_return_pct": 0.033238,
+    "median_return_pct": -0.010067,
+    "avg_holding_days": 25.85
+  },
+  "pattern_signal_experiment_context_only": {
+    "note": "非直接可比基准，仅作上下文参照(strategy_backtest_pattern_signal_entries.json，用形态信号替代entry的同类实验)",
+    "double_bottom": {
+      "total_trades": 422,
+      "win_rate": 0.4076,
+      "profit_factor": 2.292,
+      "avg_return_pct": 0.04913,
+      "median_return_pct": -0.012176,
+      "avg_holding_days": 31.84
+    },
+    "head_and_shoulders_bottom": {
+      "total_trades": 46,
+      "win_rate": 0.5217,
+      "profit_factor": 3.1463,
+      "avg_return_pct": 0.089354,
+      "median_return_pct": 0.004637,
+      "avg_holding_days": 43.67
+    }
+  },
+  "strategy1_dynamic_swing_anchored_vwap": {
+    "operationalization_disclaimer": "这是我们对官方文字描述的合理操作化实现，不是作者原始Pine代码的复刻。VWAP本身不参与entry/exit判定(见methodology_note)，摆动点检测用居中滚动窗口(_local_maxima/_local_minima风格)而非ta.highestbars/lowestbars的纯回溯语义。",
+    "prd_to_order_mapping": "prd(用户定义回溯周期)直接1:1映射为居中窗口半径order",
+    "variants": {
+      "prd_5": {
+        "no_stop_loss": {
+          "total_trades": 486,
+          "win_rate": 0.4465,
+          "profit_factor": 1.4729,
+          "avg_return_pct": 0.029669,
+          "median_return_pct": -0.01195,
+          "avg_holding_days": 58.53,
+          "open_positions_at_window_end": 100,
+          "n_symbols_with_at_least_1_trade": 184
+        },
+        "with_price_stop_loss": {
+          "total_trades": 595,
+          "win_rate": 0.4286,
+          "profit_factor": 1.5577,
+          "avg_return_pct": 0.022701,
+          "median_return_pct": -0.007366,
+          "avg_holding_days": 34.2,
+          "open_positions_at_window_end": 79,
+          "n_symbols_with_at_least_1_trade": 184
+        }
+      },
+      "prd_10": {
+        "no_stop_loss": {
+          "total_trades": 202,
+          "win_rate": 0.4059,
+          "profit_factor": 1.5358,
+          "avg_return_pct": 0.042195,
+          "median_return_pct": -0.025772,
+          "avg_holding_days": 97.71,
+          "open_positions_at_window_end": 99,
+          "n_symbols_with_at_least_1_trade": 150
+        },
+        "with_price_stop_loss": {
+          "total_trades": 266,
+          "win_rate": 0.3797,
+          "profit_factor": 1.3763,
+          "avg_return_pct": 0.020162,
+          "median_return_pct": -0.013961,
+          "avg_holding_days": 47.16,
+          "open_positions_at_window_end": 74,
+          "n_symbols_with_at_least_1_trade": 158
+        }
+      },
+      "prd_20": {
+        "no_stop_loss": {
+          "total_trades": 72,
+          "win_rate": 0.4306,
+          "profit_factor": 0.3605,
+          "avg_return_pct": -0.060883,
+          "median_return_pct": -0.034704,
+          "avg_holding_days": 112.07,
+          "open_positions_at_window_end": 110,
+          "n_symbols_with_at_least_1_trade": 68
+        },
+        "with_price_stop_loss": {
+          "total_trades": 115,
+          "win_rate": 0.2783,
+          "profit_factor": 0.2262,
+          "avg_return_pct": -0.059208,
+          "median_return_pct": -0.05086,
+          "avg_holding_days": 58.57,
+          "open_positions_at_window_end": 78,
+          "n_symbols_with_at_least_1_trade": 98
+        }
+      }
+    }
+  },
+  "strategy2_dual_phase_trend_regime": {
+    "operationalization_disclaimer": "这是我们对官方文字描述的合理操作化实现，不是作者原始Pine代码的复刻。Fast/Slow Oscillator用5日/25日ROC代理，波动率中位数用截至当天的504个交易日(约2年)滚动中位数，均为我们自选的具体实现，原描述未指定具体周期/公式。",
+    "fast_oscillator": "5日ROC (close_t - close_t-5) / close_t-5，两个vol_lookback档共用",
+    "slow_oscillator": "25日ROC (close_t - close_t-25) / close_t-25，两个vol_lookback档共用",
+    "vol_median_window_trading_days": 504,
+    "variants": {
+      "vol_lookback_20": {
+        "no_stop_loss": {
+          "total_trades": 3914,
+          "win_rate": 0.3615,
+          "profit_factor": 1.2537,
+          "avg_return_pct": 0.006236,
+          "median_return_pct": -0.010818,
+          "avg_holding_days": 8.56,
+          "open_positions_at_window_end": 63,
+          "n_symbols_with_at_least_1_trade": 186
+        },
+        "with_price_stop_loss": {
+          "total_trades": 3923,
+          "win_rate": 0.3979,
+          "profit_factor": 1.2885,
+          "avg_return_pct": 0.006157,
+          "median_return_pct": -0.006948,
+          "avg_holding_days": 7.0,
+          "open_positions_at_window_end": 56,
+          "n_symbols_with_at_least_1_trade": 186
+        }
+      },
+      "vol_lookback_60": {
+        "no_stop_loss": {
+          "total_trades": 3700,
+          "win_rate": 0.3359,
+          "profit_factor": 1.2576,
+          "avg_return_pct": 0.006477,
+          "median_return_pct": -0.012158,
+          "avg_holding_days": 8.84,
+          "open_positions_at_window_end": 67,
+          "n_symbols_with_at_least_1_trade": 186
+        },
+        "with_price_stop_loss": {
+          "total_trades": 3713,
+          "win_rate": 0.3744,
+          "profit_factor": 1.2812,
+          "avg_return_pct": 0.006154,
+          "median_return_pct": -0.008344,
+          "avg_holding_days": 7.14,
+          "open_positions_at_window_end": 56,
+          "n_symbols_with_at_least_1_trade": 186
+        }
+      }
+    }
+  },
+  "verification": {
+    "strategy1_prd5_with_price_stop_loss": [
+      {
+        "symbol": "NBIS",
+        "entry_date": "2026-01-09",
+        "exit_date": "2026-03-02",
+        "exit_reason": "exit_signal",
+        "entry_check": {
+          "bullish_at_entry_idx": "True",
+          "bullish_at_entry_idx_minus_1": "False",
+          "rising_edge_confirmed": true,
+          "confirmed_low_pivots_used": [
+            {
+              "idx": 290,
+              "date": "2025-12-17",
+              "low": 75.25
+            },
+            {
+              "idx": 299,
+              "date": "2025-12-31",
+              "low": 82.9
+            }
+          ]
+        },
+        "exit_check": {
+          "bearish_at_exit_idx": "True",
+          "bearish_at_exit_idx_minus_1": "False",
+          "rising_edge_confirmed": true,
+          "confirmed_high_pivots_used": [
+            {
+              "idx": 310,
+              "date": "2026-01-16",
+              "high": 110.5
+            },
+            {
+              "idx": 333,
+              "date": "2026-02-20",
+              "high": 108.32
+            }
+          ]
+        }
+      },
+      {
+        "symbol": "DGII",
+        "entry_date": "2025-09-11",
+        "exit_date": "2026-01-09",
+        "exit_reason": "exit_signal",
+        "entry_check": {
+          "bullish_at_entry_idx": "True",
+          "bullish_at_entry_idx_minus_1": "False",
+          "rising_edge_confirmed": true,
+          "confirmed_low_pivots_used": [
+            {
+              "idx": 981,
+              "date": "2025-08-07",
+              "low": 30.69
+            },
+            {
+              "idx": 999,
+              "date": "2025-09-03",
+              "low": 33.41
+            }
+          ]
+        },
+        "exit_check": {
+          "bearish_at_exit_idx": "True",
+          "bearish_at_exit_idx_minus_1": "False",
+          "rising_edge_confirmed": true,
+          "confirmed_high_pivots_used": [
+            {
+              "idx": 1068,
+              "date": "2025-12-10",
+              "high": 48.0
+            },
+            {
+              "idx": 1082,
+              "date": "2025-12-31",
+              "high": 45.13
+            }
+          ]
+        }
+      },
+      {
+        "symbol": "QBTS",
+        "entry_date": "2025-12-23",
+        "exit_date": "2026-01-15",
+        "exit_reason": "exit_signal",
+        "entry_check": {
+          "bullish_at_entry_idx": "True",
+          "bullish_at_entry_idx_minus_1": "False",
+          "rising_edge_confirmed": true,
+          "confirmed_low_pivots_used": [
+            {
+              "idx": 1056,
+              "date": "2025-11-21",
+              "low": 18.545
+            },
+            {
+              "idx": 1071,
+              "date": "2025-12-15",
+              "low": 23.57
+            }
+          ]
+        },
+        "exit_check": {
+          "bearish_at_exit_idx": "True",
+          "bearish_at_exit_idx_minus_1": "False",
+          "rising_edge_confirmed": true,
+          "confirmed_high_pivots_used": [
+            {
+              "idx": 1076,
+              "date": "2025-12-22",
+              "high": 32.39
+            },
+            {
+              "idx": 1086,
+              "date": "2026-01-07",
+              "high": 32.155
+            }
+          ]
+        }
+      },
+      {
+        "symbol": "ASND",
+        "entry_date": "2026-04-16",
+        "exit_date": "2026-05-18",
+        "exit_reason": "exit_signal",
+        "entry_check": {
+          "bullish_at_entry_idx": "True",
+          "bullish_at_entry_idx_minus_1": "False",
+          "rising_edge_confirmed": true,
+          "confirmed_low_pivots_used": [
+            {
+              "idx": 1138,
+              "date": "2026-03-24",
+              "low": 212.595
+            },
+            {
+              "idx": 1148,
+              "date": "2026-04-08",
+              "low": 216.53
+            }
+          ]
+        },
+        "exit_check": {
+          "bearish_at_exit_idx": "True",
+          "bearish_at_exit_idx_minus_1": "False",
+          "rising_edge_confirmed": true,
+          "confirmed_high_pivots_used": [
+            {
+              "idx": 1151,
+              "date": "2026-04-13",
+              "high": 250.74
+            },
+            {
+              "idx": 1170,
+              "date": "2026-05-08",
+              "high": 250.27
+            }
+          ]
+        }
+      },
+      {
+        "symbol": "BBIO",
+        "entry_date": "2026-06-29",
+        "exit_date": "2026-08-04",
+        "exit_reason": "exit_signal",
+        "entry_check": {
+          "bullish_at_entry_idx": "True",
+          "bullish_at_entry_idx_minus_1": "False",
+          "rising_edge_confirmed": true,
+          "confirmed_low_pivots_used": [
+            {
+              "idx": 1186,
+              "date": "2026-06-02",
+              "low": 62.5
+            },
+            {
+              "idx": 1198,
+              "date": "2026-06-18",
+              "low": 65.591
+            }
+          ]
+        },
+        "exit_check": {
+          "bearish_at_exit_idx": "True",
+          "bearish_at_exit_idx_minus_1": "False",
+          "rising_edge_confirmed": true,
+          "confirmed_high_pivots_used": [
+            {
+              "idx": 1211,
+              "date": "2026-07-09",
+              "high": 93.415
+            },
+            {
+              "idx": 1223,
+              "date": "2026-07-27",
+              "high": 86.32
+            }
+          ]
+        }
+      }
+    ],
+    "strategy2_voln20_with_price_stop_loss": [
+      {
+        "symbol": "TW",
+        "entry_date": "2026-06-15",
+        "exit_date": "2026-06-16",
+        "exit_reason": "price_stop_loss",
+        "entry_check": {
+          "effective_osc_at_entry": 0.03510381763373541,
+          "effective_osc_prev_day": -0.01306933292741298,
+          "rising_edge_confirmed": "True",
+          "detail_at_entry": {
+            "vol_t": 0.020225162688620065,
+            "median_vol": 0.014733010928228103,
+            "high_vol": true,
+            "fast_roc": 0.03510381763373541,
+            "slow_roc": -0.0637600525439774
+          }
+        },
+        "exit_check": {
+          "independent_check_trend_gate_price_stop_loss_triggered": true,
+          "weekly_support_level": 110.89,
+          "matches_backtest_exit_reason": true
+        }
+      },
+      {
+        "symbol": "NBIS",
+        "entry_date": "2025-11-05",
+        "exit_date": "2025-11-06",
+        "exit_reason": "exit_signal",
+        "entry_check": {
+          "effective_osc_at_entry": 0.012023176042816998,
+          "effective_osc_prev_day": -0.015409243602626436,
+          "rising_edge_confirmed": "True",
+          "detail_at_entry": {
+            "vol_t": 0.06023006710381471,
+            "median_vol": 0.0618527196386212,
+            "high_vol": false,
+            "fast_roc": -0.06474819003132687,
+            "slow_roc": 0.012023176042816998
+          }
+        },
+        "exit_check": {
+          "effective_osc_at_exit": -0.13053150033097907,
+          "effective_osc_prev_day": 0.012023176042816998,
+          "falling_edge_confirmed": "True",
+          "detail_at_exit": {
+            "vol_t": 0.05814060321837787,
+            "median_vol": 0.06182044400670677,
+            "high_vol": false,
+            "fast_roc": -0.1186986457363955,
+            "slow_roc": -0.13053150033097907
+          }
+        }
+      },
+      {
+        "symbol": "AXIL",
+        "entry_date": "2025-11-11",
+        "exit_date": "2025-11-12",
+        "exit_reason": "exit_signal",
+        "entry_check": {
+          "effective_osc_at_entry": 0.01197603593581715,
+          "effective_osc_prev_day": -0.1306620261160565,
+          "rising_edge_confirmed": "True",
+          "detail_at_entry": {
+            "vol_t": 0.07600660447735363,
+            "median_vol": 0.055044715253364004,
+            "high_vol": true,
+            "fast_roc": 0.01197603593581715,
+            "slow_roc": -0.1392189666234221
+          }
+        },
+        "exit_check": {
+          "effective_osc_at_exit": -0.04817180601907035,
+          "effective_osc_prev_day": 0.01197603593581715,
+          "falling_edge_confirmed": "True",
+          "detail_at_exit": {
+            "vol_t": 0.07562117610564309,
+            "median_vol": 0.055073689807818293,
+            "high_vol": true,
+            "fast_roc": -0.04817180601907035,
+            "slow_roc": -0.10545453158291904
+          }
+        }
+      },
+      {
+        "symbol": "HTFL",
+        "entry_date": "2026-04-02",
+        "exit_date": "2026-05-18",
+        "exit_reason": "exit_signal",
+        "entry_check": {
+          "effective_osc_at_entry": 0.030718130611496443,
+          "effective_osc_prev_day": -0.11711711711711711,
+          "rising_edge_confirmed": "True",
+          "detail_at_entry": {
+            "vol_t": 0.04900127015194944,
+            "median_vol": 0.049525693044428,
+            "high_vol": false,
+            "fast_roc": -0.040571842005787936,
+            "slow_roc": 0.030718130611496443
+          }
+        },
+        "exit_check": {
+          "effective_osc_at_exit": -0.06507472940404221,
+          "effective_osc_prev_day": 0.05064934072266359,
+          "falling_edge_confirmed": "True",
+          "detail_at_exit": {
+            "vol_t": 0.04531539899671066,
+            "median_vol": 0.04659840209763262,
+            "high_vol": false,
+            "fast_roc": -0.12742426028099235,
+            "slow_roc": -0.06507472940404221
+          }
+        }
+      },
+      {
+        "symbol": "OMCL",
+        "entry_date": "2026-04-27",
+        "exit_date": "2026-05-05",
+        "exit_reason": "exit_signal",
+        "entry_check": {
+          "effective_osc_at_entry": 0.13720159850686134,
+          "effective_osc_prev_day": -0.023772201578654915,
+          "rising_edge_confirmed": "True",
+          "detail_at_entry": {
+            "vol_t": 0.01977176192013483,
+            "median_vol": 0.025542308355971724,
+            "high_vol": false,
+            "fast_roc": -0.0044973061475260525,
+            "slow_roc": 0.13720159850686134
+          }
+        },
+        "exit_check": {
+          "effective_osc_at_exit": -0.042847660297968854,
+          "effective_osc_prev_day": 0.15439801737121647,
+          "falling_edge_confirmed": "True",
+          "detail_at_exit": {
+            "vol_t": 0.05281822856779167,
+            "median_vol": 0.025612549501180887,
+            "high_vol": true,
+            "fast_roc": -0.042847660297968854,
+            "slow_roc": 0.34652251709184917
+          }
+        }
+      }
+    ]
+  },
+  "comparison_table": [
+    {
+      "config": "existing_baseline_entry_exit_3pct_5day",
+      "total_trades": 1117,
+      "win_rate": 0.4091,
+      "profit_factor": 1.8578,
+      "avg_return_pct": 0.033238,
+      "median_return_pct": -0.010067
+    },
+    {
+      "config": "context_only_double_bottom_replaces_entry",
+      "total_trades": 422,
+      "win_rate": 0.4076,
+      "profit_factor": 2.292,
+      "avg_return_pct": 0.04913,
+      "median_return_pct": -0.012176
+    },
+    {
+      "config": "context_only_head_and_shoulders_bottom_replaces_entry",
+      "total_trades": 46,
+      "win_rate": 0.5217,
+      "profit_factor": 3.1463,
+      "avg_return_pct": 0.089354,
+      "median_return_pct": 0.004637
+    },
+    {
+      "config": "strategy1_vwap_swing_prd5_no_sl",
+      "total_trades": 486,
+      "win_rate": 0.4465,
+      "profit_factor": 1.4729,
+      "avg_return_pct": 0.029669,
+      "median_return_pct": -0.01195
+    },
+    {
+      "config": "strategy1_vwap_swing_prd5_3pct_5day_sl",
+      "total_trades": 595,
+      "win_rate": 0.4286,
+      "profit_factor": 1.5577,
+      "avg_return_pct": 0.022701,
+      "median_return_pct": -0.007366
+    },
+    {
+      "config": "strategy1_vwap_swing_prd10_no_sl",
+      "total_trades": 202,
+      "win_rate": 0.4059,
+      "profit_factor": 1.5358,
+      "avg_return_pct": 0.042195,
+      "median_return_pct": -0.025772
+    },
+    {
+      "config": "strategy1_vwap_swing_prd10_3pct_5day_sl",
+      "total_trades": 266,
+      "win_rate": 0.3797,
+      "profit_factor": 1.3763,
+      "avg_return_pct": 0.020162,
+      "median_return_pct": -0.013961
+    },
+    {
+      "config": "strategy1_vwap_swing_prd20_no_sl",
+      "total_trades": 72,
+      "win_rate": 0.4306,
+      "profit_factor": 0.3605,
+      "avg_return_pct": -0.060883,
+      "median_return_pct": -0.034704
+    },
+    {
+      "config": "strategy1_vwap_swing_prd20_3pct_5day_sl",
+      "total_trades": 115,
+      "win_rate": 0.2783,
+      "profit_factor": 0.2262,
+      "avg_return_pct": -0.059208,
+      "median_return_pct": -0.05086
+    },
+    {
+      "config": "strategy2_dual_phase_voln20_no_sl",
+      "total_trades": 3914,
+      "win_rate": 0.3615,
+      "profit_factor": 1.2537,
+      "avg_return_pct": 0.006236,
+      "median_return_pct": -0.010818
+    },
+    {
+      "config": "strategy2_dual_phase_voln20_3pct_5day_sl",
+      "total_trades": 3923,
+      "win_rate": 0.3979,
+      "profit_factor": 1.2885,
+      "avg_return_pct": 0.006157,
+      "median_return_pct": -0.006948
+    },
+    {
+      "config": "strategy2_dual_phase_voln60_no_sl",
+      "total_trades": 3700,
+      "win_rate": 0.3359,
+      "profit_factor": 1.2576,
+      "avg_return_pct": 0.006477,
+      "median_return_pct": -0.012158
+    },
+    {
+      "config": "strategy2_dual_phase_voln60_3pct_5day_sl",
+      "total_trades": 3713,
+      "win_rate": 0.3744,
+      "profit_factor": 1.2812,
+      "avg_return_pct": 0.006154,
+      "median_return_pct": -0.008344
+    }
+  ],
+  "key_finding": "两个策略在我们的操作化实现下都没有跑赢现有entry/exit六线共振基线(overall n=1117/win_rate=0.4091/profit_factor=1.8578)。策略1(VWAP结构翻转)最好的一档是prd5_with_price_stop_loss：n=595/win_rate=0.4286/profit_factor=1.5577，profit_factor比基线低约16%，win_rate相近；prd20一档明显失效(profit_factor 0.36/0.23，avg_return为负)，说明这个操作化下'回溯周期越长越稳'的直觉不成立——反而是样本量骤减(72/115笔)加上少数大幅回撤的交易主导了结果，不是一个可靠的参数方向。策略2(双态振荡器切换)四档全部集中在profit_factor 1.25-1.29区间，明显低于基线，且交易频率极高(n=3700-3923，平均每只股票一年20+笔，平均持仓7-9天)——本质上是把ROC(5)/ROC(25)零轴穿越当高频短线信号在用，跟基线'MA+MACD+RSI三线共振'这种偏低频、偏结构性的信号完全不是一个量级，噪音交易多、单笔期望收益薄(avg_return≈0.6%/笔)。两个策略的'加/不加price_stop_loss'对比：策略1加止损后普遍profit_factor提升(prd5: 1.47→1.56；prd10反而下降1.54→1.38)，且持仓天数大幅缩短(prd5: 58.5天→34.2天)，说明策略1本身没有止损时容易让亏损单拖很久，作者建议用户自行加ATR止损这个提醒是有数据支持的；策略2加止损对profit_factor影响很小(20:1.2537→1.2885；60:1.2576→1.2812)，因为策略2本身平均持仓只有7-9天，交易早就靠exit_rise迅速换手，止损很少有机会先触发(price_stop_loss段的交易占比明显低于策略1)。总体上，两个策略都不建议吸收为entry替代信号；如果一定要用，策略1(VWAP结构翻转，prd5+止损)作为叠加过滤或许还有讨论空间，策略2在这个操作化下交易太密、太噪，不建议在当前系统里使用。",
+  "recommendation": "不建议吸收策略2(Dual-Phase Trend Regime)：无论是替代entry还是叠加双重确认，其operationalization跑出来的信号频率(3700+笔/186只股票/1年)和现有系统'低频、结构性确认'的设计哲学不匹配，profit_factor全档低于基线且明显低于同类形态信号实验(double_bottom/head_and_shoulders_bottom)，没有看到值得进一步调参的迹象——如果要继续验证，应该先换一组'确认延迟更长/阈值更严格'的振荡器代理再测一轮，而不是在当前ROC(5)/ROC(25)零轴穿越框架下继续调N。策略1(Dynamic Swing Anchored VWAP)不建议作为entry替代信号(profit_factor全档低于基线)，但prd5_with_price_stop_loss这一档(profit_factor 1.5577，win_rate 0.4286，n=595)不算差，且'加止损后结果变好、持仓期显著缩短'这个方向和作者自己的建议(自行加ATR止损)是一致的——如果要进一步利用，比较有讨论价值的路径是'新信号+现有entry信号双重确认'（即只在两套信号同时/先后确认时才开仓，参照strategy_backtest_pattern_signal_entries.json里同类'双重确认'实验的处理方式），这次没有跑这个双重确认变体(超出本轮任务范围，需要另起一轮)，如果后续想验证，应该优先测这个而不是继续在'替代entry'这条路上调prd。整体结论：两个策略都不建议直接吸收进当前系统；如果要投入下一步验证精力，优先级是'策略1的双重确认变体' > '策略2换一套更保守的振荡器代理重测' > 都不做。"
+}

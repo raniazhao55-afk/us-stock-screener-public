@@ -1,0 +1,326 @@
+{
+  "built_date": "2026-09-08",
+  "hypothesis_1_entry_feature_comparison": {
+    "methodology_note": "对strategy_backtest_entry_exit.json的1139笔交易(602笔exit_signal + 537笔price_stop_loss)逐笔回到entry_date提取买入当天的指标快照。性能优化：RSI/MACD/MA是纯因果(causal)指标，只依赖当天及之前的历史数据，不受curr_date截止点之后加入更多数据影响，因此_prepared_df每个symbol只调用一次(用较晚的curr_date='2026-09-08'覆盖该symbol全部entry_date)，再按entry_date在同一份df里查表取值，而不是1139次独立调用——用9笔随机抽样(含最早的一笔交易CRCT 2025-09-08)与\"curr_date=entry_date\"的直接调用逐一比对rsi6/macd/macds，全部完全一致(证明该优化不引入任何数值偏差)。check_trend_gate()的pct_below_weekly_support不能做这个优化(支撑位的26/30周滚动窗口结尾会随curr_date变化，必须逐笔单独调用，1139次)。entry_state_days_since_formed=连续向前数entry_state为True的交易日数(run length)；由于本策略entry信号统一用rising edge触发(entry_rise = entry_state & ~entry_state.shift(1))，每一笔trade的entry_date定义上都是状态刚形成的第1天，所以这个特征在两组里恒为1，组间无法比较(方差为0)——不是分析疏漏，是触发口径决定的。统计检验：Welch's t-test(均值差异，不假设等方差) + Mann-Whitney U(分布差异，不假设正态)双检验；notable_difference取p<0.01(Welch t)且|Cohen's d|>=0.2作为机械判定阈值，边界案例(如macd_minus_signal：p显著但d较小)在key_finding里单独说明，不套用固定阈值掩盖细节。验证：9笔抽样(UI/NVDA/ESI/VRSN/NTAP/NBIS/HPE/REGN/CRCT)用curr_date=entry_date的直接调用逐一复核rsi6/macd/macds/pct_below_weekly_support，全部完全一致。",
+    "exit_signal_group_n": 602,
+    "price_stop_loss_group_n": 537,
+    "features": {
+      "rsi6_at_entry": {
+        "exit_signal_n": 602,
+        "exit_signal_mean": 71.2604,
+        "exit_signal_median": 71.03,
+        "exit_signal_std": 8.5244,
+        "price_stop_loss_n": 537,
+        "price_stop_loss_mean": 66.8735,
+        "price_stop_loss_median": 65.87,
+        "price_stop_loss_std": 8.5382,
+        "welch_t_pvalue": 0.0,
+        "mannwhitney_u_pvalue": 0.0,
+        "cohens_d": 0.5142,
+        "notable_difference": true
+      },
+      "rsi12_at_entry": {
+        "exit_signal_n": 602,
+        "exit_signal_mean": 62.6856,
+        "exit_signal_median": 61.975,
+        "exit_signal_std": 7.4893,
+        "price_stop_loss_n": 537,
+        "price_stop_loss_mean": 57.9061,
+        "price_stop_loss_median": 57.35,
+        "price_stop_loss_std": 6.0896,
+        "welch_t_pvalue": 0.0,
+        "mannwhitney_u_pvalue": 0.0,
+        "cohens_d": 0.6962,
+        "notable_difference": true
+      },
+      "rsi24_at_entry": {
+        "exit_signal_n": 602,
+        "exit_signal_mean": 57.6317,
+        "exit_signal_median": 56.935,
+        "exit_signal_std": 6.5593,
+        "price_stop_loss_n": 537,
+        "price_stop_loss_mean": 50.7931,
+        "price_stop_loss_median": 50.56,
+        "price_stop_loss_std": 4.5651,
+        "welch_t_pvalue": 0.0,
+        "mannwhitney_u_pvalue": 0.0,
+        "cohens_d": 1.1984,
+        "notable_difference": true
+      },
+      "macd_at_entry": {
+        "exit_signal_n": 602,
+        "exit_signal_mean": 1.9332,
+        "exit_signal_median": 0.4718,
+        "exit_signal_std": 7.6406,
+        "price_stop_loss_n": 537,
+        "price_stop_loss_mean": -0.4246,
+        "price_stop_loss_median": -0.1096,
+        "price_stop_loss_std": 3.1033,
+        "welch_t_pvalue": 0.0,
+        "mannwhitney_u_pvalue": 0.0,
+        "cohens_d": 0.3963,
+        "notable_difference": true
+      },
+      "macds_at_entry": {
+        "exit_signal_n": 602,
+        "exit_signal_mean": 0.7689,
+        "exit_signal_median": 0.0691,
+        "exit_signal_std": 7.066,
+        "price_stop_loss_n": 537,
+        "price_stop_loss_mean": -2.2229,
+        "price_stop_loss_median": -0.7476,
+        "price_stop_loss_std": 6.7564,
+        "welch_t_pvalue": 0.0,
+        "mannwhitney_u_pvalue": 0.0,
+        "cohens_d": 0.4322,
+        "notable_difference": true
+      },
+      "macd_minus_signal_at_entry": {
+        "exit_signal_n": 602,
+        "exit_signal_mean": 1.1643,
+        "exit_signal_median": 0.4588,
+        "exit_signal_std": 1.908,
+        "price_stop_loss_n": 537,
+        "price_stop_loss_mean": 1.7982,
+        "price_stop_loss_median": 0.792,
+        "price_stop_loss_std": 6.8188,
+        "welch_t_pvalue": 0.037674,
+        "mannwhitney_u_pvalue": 4e-06,
+        "cohens_d": -0.1298,
+        "notable_difference": false
+      },
+      "pct_above_20d_ma_at_entry": {
+        "exit_signal_n": 602,
+        "exit_signal_mean": 0.085,
+        "exit_signal_median": 0.0591,
+        "exit_signal_std": 0.1022,
+        "price_stop_loss_n": 537,
+        "price_stop_loss_mean": 0.0675,
+        "price_stop_loss_median": 0.0504,
+        "price_stop_loss_std": 0.0729,
+        "welch_t_pvalue": 0.000845,
+        "mannwhitney_u_pvalue": 1.6e-05,
+        "cohens_d": 0.195,
+        "notable_difference": false
+      },
+      "pct_above_60d_ma_at_entry": {
+        "exit_signal_n": 602,
+        "exit_signal_mean": 0.0918,
+        "exit_signal_median": 0.0652,
+        "exit_signal_std": 0.1504,
+        "price_stop_loss_n": 537,
+        "price_stop_loss_mean": -0.0057,
+        "price_stop_loss_median": -0.0107,
+        "price_stop_loss_std": 0.0924,
+        "welch_t_pvalue": 0.0,
+        "mannwhitney_u_pvalue": 0.0,
+        "cohens_d": 0.7709,
+        "notable_difference": true
+      },
+      "volume_spike_at_entry": {
+        "exit_signal_n": 602,
+        "exit_signal_mean": 1.2421,
+        "exit_signal_median": 0.9891,
+        "exit_signal_std": 1.4119,
+        "price_stop_loss_n": 537,
+        "price_stop_loss_mean": 1.0548,
+        "price_stop_loss_median": 0.8798,
+        "price_stop_loss_std": 0.808,
+        "welch_t_pvalue": 0.005481,
+        "mannwhitney_u_pvalue": 2.4e-05,
+        "cohens_d": 0.1605,
+        "notable_difference": false
+      },
+      "pct_below_weekly_support_at_entry": {
+        "exit_signal_n": 519,
+        "exit_signal_mean": -0.1788,
+        "exit_signal_median": -0.1122,
+        "exit_signal_std": 0.2349,
+        "price_stop_loss_n": 537,
+        "price_stop_loss_mean": 0.1036,
+        "price_stop_loss_median": 0.0815,
+        "price_stop_loss_std": 0.1044,
+        "welch_t_pvalue": 0.0,
+        "mannwhitney_u_pvalue": 0.0,
+        "cohens_d": -1.563,
+        "notable_difference": true
+      },
+      "entry_state_days_since_formed": {
+        "exit_signal_n": 602,
+        "exit_signal_mean": 1.0,
+        "exit_signal_median": 1.0,
+        "exit_signal_std": 0.0,
+        "price_stop_loss_n": 537,
+        "price_stop_loss_mean": 1.0,
+        "price_stop_loss_median": 1.0,
+        "price_stop_loss_std": 0.0,
+        "welch_t_pvalue": null,
+        "mannwhitney_u_pvalue": null,
+        "cohens_d": 0.0,
+        "notable_difference": false
+      }
+    },
+    "key_finding": "pct_below_weekly_support_at_entry差异最大且最可能是根因(Cohen's d=-1.56，全部特征里效应量最大，p<1e-99)：exit_signal组入场时价格平均在周线支撑位上方17.88%(中位数+11.22%)，price_stop_loss组入场时价格平均已经在周线支撑位下方10.36%(中位数-8.15%)——更关键的是，price_stop_loss组89.76%的交易(482/537)在entry当天价格就已经跌破了这个周线支撑位，对比exit_signal组只有10.98%(57/519，另有83笔因新股上市不足30个月K/40周K被check_trend_gate()判定为insufficient_history、price_stop_loss机制对它们永远不触发因而全部归入exit_signal组，不是抽样偏差)。这直接证实了用户假设，且比假设描述的更严重：问题不是入场时'缓冲空间偏小'，而是entry信号触发时价格往往已经跌破了止损系统赖以定义止损线的那个结构性支撑位——entry_state只看5/10/20日短周期均线+MACD+RSI的多头对齐，完全不检查26-30周的长周期结构位置，所以能在长期趋势已破位、只是短期超跌反弹时被触发(经典熊市反弹陷阱)，几天后反弹力竭就被price_stop_loss打出——这也解释了price_stop_loss组平均持仓仅3.87天。RSI24(d=1.20)、pct_above_60d_ma(d=0.77)、RSI12(d=0.70)、RSI6(d=0.51)、macd/macds(d≈0.40-0.43)同向印证同一个故事：price_stop_loss组入场时RSI三线虽满足entry_state\">50且多头排序\"的门槛，但数值系统性更贴近50分界线(RSI24中位数50.56，几乎压线)，MACD/MACD signal也更常处于零轴下方(price_stop_loss组均值为负，exit_signal组均值为正)，且价格相对60日均线中位数为-1.07%(exit_signal组为+6.52%)——即price_stop_loss组是在中期趋势仍然偏弱、动能刚过及格线的边缘状态被触发入场，不是追高追多的问题：pct_above_20d_ma(d=0.20)、volume_spike(d=0.16)、macd_minus_signal即金叉力度(d=-0.13，且Welch检验p=0.038临界显著、但Mann-Whitney p=4e-6高度显著、方向反直觉——price_stop_loss组的中位数金叉力度反而略强)这三个'追高/放量/金叉力度'相关特征的效应量都远小于结构位置和RSI/MACD绝对水平相关的特征，不是主要区分因子。"
+  },
+  "hypothesis_2_stop_loss_parameter_sweep": {
+    "methodology_note": "复用strategy_backtest_entry_exit.json的向量化状态机方法学：entry用rising edge触发(entry_rise = entry_state & ~entry_state.shift(1))买入，持仓中每天检查exit_rise或price_stop_loss(冻结触发日阈值比对最近N天原始收盘价，非逐日各自阈值分别AND)任一为真即卖出，同一股票同时最多1仓，窗口=该symbol最后交易日往前365个日历日、窗口起点一律空仓开始，窗口结束仍持仓的头寸不计入trades/aggregate统计。holding_days=exit_date与entry_date的日历天数差(不是交易日行数差——首次实现时误用了交易日行数差，用原JSON里ALAB 2025-09-09→2025-10-01(holding_days=22，等于日历天数差而非约15个交易日)这笔样本交易发现并修正)。周线支撑位(=max(26周摆动低点,30周均线))的计算是唯一的性能热点(每个symbol每个交易日一次check_trend_gate()调用)，buffer%和confirm_days只影响支撑位算出来之后的阈值比较、与支撑位本身无关，因此支撑位对186个symbol×窗口内全部交易日只计算一次(46,554次check_trend_gate调用，199.2秒)，5组参数复用同一份支撑位缓存分别做阈值扫描(0.1秒)。",
+    "validation_against_original_baseline": "baseline(3%/3天)用本脚本重新独立计算(不是直接复制原JSON数值)，与strategy_backtest_entry_exit.json原始结果逐项比对：exit_signal/price_stop_loss笔数完全一致(602/537)，overall avg_holding_days完全一致(25.06=25.06)，exit_signal_segment/price_stop_loss_segment的avg_holding_days几乎完全一致(43.95≈43.96、3.88≈3.87)，win_rate/profit_factor/avg_return_pct均在小数点后第3-4位内高度吻合(如overall win_rate 0.3942 vs 0.3951，profit_factor 1.8487 vs 1.8504)——差异量级符合1-2笔临界(return_pct接近0)交易因浮点精度差异发生win/loss边界翻转的正常范围，不影响任何结论。唯一的小偏差是open_positions_at_window_end：本脚本67 vs 原JSON 66，相差1笔，判断是窗口边界(>=365天 vs >365天或等价的浮点日期比较)的一个边界情形，不影响trades层面的任何统计。5组参数(baseline + 4个新变体)各抽查2-3笔price_stop_loss交易，用对应buffer/confirm_days重新独立调用check_trend_gate()逐笔复核price_stop_loss_triggered=True，全部通过(共11笔：baseline 3笔[QBTS/FXHO/SONO]+ 4个变体各2笔[PAYX/SDGR/RPM/YELP/TEAM/DOCS等])。",
+    "baseline_3pct_3day": {
+      "params": {
+        "buffer_pct": 0.03,
+        "confirm_days": 3
+      },
+      "stop_loss_segment": {
+        "n": 537,
+        "win_rate": 0.3259,
+        "profit_factor": 0.2966,
+        "avg_return_pct": -0.017356,
+        "median_return_pct": -0.009689,
+        "avg_holding_days": 3.88
+      },
+      "exit_signal_segment": {
+        "n": 602,
+        "win_rate": 0.4551,
+        "profit_factor": 2.5363,
+        "avg_return_pct": 0.076338,
+        "median_return_pct": -0.018715,
+        "avg_holding_days": 43.95
+      },
+      "overall": {
+        "n": 1139,
+        "win_rate": 0.3942,
+        "profit_factor": 1.8487,
+        "avg_return_pct": 0.032165,
+        "median_return_pct": -0.011274,
+        "avg_holding_days": 25.06
+      },
+      "open_positions_at_window_end": 67
+    },
+    "variant_5pct_3day": {
+      "params": {
+        "buffer_pct": 0.05,
+        "confirm_days": 3
+      },
+      "stop_loss_segment": {
+        "n": 423,
+        "win_rate": 0.3215,
+        "profit_factor": 0.2801,
+        "avg_return_pct": -0.01905,
+        "median_return_pct": -0.011274,
+        "avg_holding_days": 3.59
+      },
+      "exit_signal_segment": {
+        "n": 650,
+        "win_rate": 0.4385,
+        "profit_factor": 2.3864,
+        "avg_return_pct": 0.070436,
+        "median_return_pct": -0.023395,
+        "avg_holding_days": 43.05
+      },
+      "overall": {
+        "n": 1073,
+        "win_rate": 0.3924,
+        "profit_factor": 1.8532,
+        "avg_return_pct": 0.035158,
+        "median_return_pct": -0.014656,
+        "avg_holding_days": 27.49
+      },
+      "open_positions_at_window_end": 69
+    },
+    "variant_7pct_3day": {
+      "params": {
+        "buffer_pct": 0.07,
+        "confirm_days": 3
+      },
+      "stop_loss_segment": {
+        "n": 351,
+        "win_rate": 0.2906,
+        "profit_factor": 0.2509,
+        "avg_return_pct": -0.02165,
+        "median_return_pct": -0.012702,
+        "avg_holding_days": 3.31
+      },
+      "exit_signal_segment": {
+        "n": 680,
+        "win_rate": 0.4294,
+        "profit_factor": 2.2873,
+        "avg_return_pct": 0.06668,
+        "median_return_pct": -0.025548,
+        "avg_holding_days": 42.6
+      },
+      "overall": {
+        "n": 1031,
+        "win_rate": 0.3822,
+        "profit_factor": 1.832,
+        "avg_return_pct": 0.036609,
+        "median_return_pct": -0.017991,
+        "avg_holding_days": 29.22
+      },
+      "open_positions_at_window_end": 69
+    },
+    "variant_3pct_5day": {
+      "params": {
+        "buffer_pct": 0.03,
+        "confirm_days": 5
+      },
+      "stop_loss_segment": {
+        "n": 469,
+        "win_rate": 0.3817,
+        "profit_factor": 0.4327,
+        "avg_return_pct": -0.01115,
+        "median_return_pct": -0.006197,
+        "avg_holding_days": 2.68
+      },
+      "exit_signal_segment": {
+        "n": 648,
+        "win_rate": 0.429,
+        "profit_factor": 2.2435,
+        "avg_return_pct": 0.065363,
+        "median_return_pct": -0.026461,
+        "avg_holding_days": 42.62
+      },
+      "overall": {
+        "n": 1117,
+        "win_rate": 0.4091,
+        "profit_factor": 1.8578,
+        "avg_return_pct": 0.033238,
+        "median_return_pct": -0.010067,
+        "avg_holding_days": 25.85
+      },
+      "open_positions_at_window_end": 68
+    },
+    "variant_5pct_5day": {
+      "params": {
+        "buffer_pct": 0.05,
+        "confirm_days": 5
+      },
+      "stop_loss_segment": {
+        "n": 377,
+        "win_rate": 0.3475,
+        "profit_factor": 0.3544,
+        "avg_return_pct": -0.01465,
+        "median_return_pct": -0.008208,
+        "avg_holding_days": 2.86
+      },
+      "exit_signal_segment": {
+        "n": 685,
+        "win_rate": 0.419,
+        "profit_factor": 2.1712,
+        "avg_return_pct": 0.062192,
+        "median_return_pct": -0.027358,
+        "avg_holding_days": 41.89
+      },
+      "overall": {
+        "n": 1062,
+        "win_rate": 0.3936,
+        "profit_factor": 1.8252,
+        "avg_return_pct": 0.034914,
+        "median_return_pct": -0.014715,
+        "avg_holding_days": 28.03
+      },
+      "open_positions_at_window_end": 69
+    },
+    "key_finding": "单纯放宽缓冲%(3%→5%→7%，confirm_days固定3天)不但没有改善，反而单调变差：整体win_rate从baseline的0.3942降到5%的0.3924、7%的0.3822，整体profit_factor也从1.8487微降到7%的1.832；止损段自身的win_rate/profit_factor同样单调恶化(0.3259/0.2966 → 0.3215/0.2801 → 0.2906/0.2509)——放宽缓冲不是让止损'晚一点'触发从而给反弹留出空间，而是让本该止损的交易拖到更深的亏损才触发(止损段avg_return从baseline的-1.74%恶化到7%缓冲的-2.17%)，同时被推迟的交易也没有在exit_signal那边表现出补偿性的更好收益(exit_signal_segment avg_return反而从7.63%降到6.67%，因为原本该被stop掉的弱势交易现在被并入了exit_signal统计口径，拉低了这个分段本身的平均质量)。相反，单独延长确认窗口(confirm_days 3天→5天，缓冲%不变)有实质改善：3%/5天组合的整体win_rate=0.4091，是5组里最高的(比baseline高1.5个百分点)，整体profit_factor=1.8578也是5组最高；止损段自身质量也真实变好(win_rate 0.3259→0.3817，profit_factor 0.2966→0.4327，avg_return -1.74%→-1.12%)，不是简单地把坏交易推给了exit_signal段(exit_signal_segment的avg_return从7.63%降到6.54%，降幅比buffer拉宽的情形小，且止损段自己也确实变好了，是双赢而非此消彼长)。5%/5天组合居中(整体win_rate 0.3936、profit_factor 1.8252，比baseline整体略差，但止损段本身比baseline好)。总体结论：5组里3%/5天(变体C)综合表现最好，7%/3天(变体B)综合表现最差；'放宽缓冲%'这个方向被证伪(单调变差)，'延长确认天数'这个方向被证实有效但改善幅度有限(整体win_rate+1.5pp，profit_factor基本持平)。"
+  },
+  "combined_recommendation": "两个假设合在一起指向同一个修复方向，且是互补而非矛盾的：假设2证明单纯调止损参数(放宽缓冲%)没用甚至反效果，说明问题的根源不在止损模块本身的阈值设得太紧；假设1证明price_stop_loss段89.76%的交易在entry当天价格就已经跌破了止损系统赖以定义支撑位的那条线，说明问题在entry模块——entry_state的三线(MA5/10/20 + MACD + RSI)判断完全是短周期(日线)信号，从不检查26-30周的长周期结构位置，因此系统性地在长期趋势已破位、只是短期超跌反弹的位置买入，几天后反弹力竭就被下游的止损模块清出。可操作的修复方向是在entry_state触发条件上叠加一个价格位置门槛：要求check_trend_gate()算出的pct_below_weekly_support在entry当天为负值(即价格仍在周线支撑位上方)才允许买入，而不是继续在止损侧调参数——这与之前已验证无效的trend_regime过滤(月/周MACD零轴四象限分类)是不同粒度的过滤器：trend_regime是四档粗分类，pct_below_weekly_support是这次新分析出来的连续数值型特征，效应量(Cohen's d=-1.56)远大于本次测试的其余任何特征，是本次两个假设检验里最强的单一信号。止损参数上，如果仍需要在entry不变的前提下做微调，3%缓冲/5天确认(变体C)是5组里综合表现最好的组合(整体win_rate+1.5pp、profit_factor持平、止损段自身质量也真实改善)，优于目前使用的3%/3天，但改善幅度远不如从entry侧堵住'已破位入场'这个根因。"
+}

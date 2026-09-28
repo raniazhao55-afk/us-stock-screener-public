@@ -1,0 +1,168 @@
+{
+  "built_date": "2026-09-09",
+  "purpose": "验证TradingView作者Zeiierman主页上三个开源indicator(Ranked Support & Resistance Zones、Ranked Order Block Zones、Range Oscillator)是否值得吸收进us-stock-screener。前两个是第三、第四种候选支撑位定义方法(前两种已测：baseline的26周低点/30周均线、已候选采纳的摆动高低点cap40wk+2x异常值过滤)；第三个按ADX过滤器同款框架当entry过滤器测试。",
+
+  "methodology_note_CRITICAL": "未获取到任何一个脚本的Pine源码——WebFetch只读到TradingView页面的营销性文字描述，读不到Source code标签页内容。以下Ranked S&R / Ranked Order Block / Range Oscillator三个字段里的全部公式、7个(或6个)打分因子的具体算法、权重、阈值、衰减函数形状，全部是我们基于文字描述自行设计的合理操作化实现，不是作者原始Pine代码的复刻，也没有任何方式核实这套操作化跟作者实际实现的接近程度。文字描述本身相当抽象(比如'区域宽度/ATR比率'没说宽的好还是窄的好、'年龄衰减'没说线性还是指数、'缓解进度'没说是二元判断还是连续量)，我们对每一处都做出了自己认为合理的选择并在下面各自的字段里写明理由；这些选择本身没有被论文/官方文档验证过，换一个人来做操作化很可能得到不同(甚至完全不同)的规则和数字。",
+
+  "universe": {"n_symbols": 186, "source": "strategy_backtest_entry_exit.json的industries.*.trades[].symbol去重，与前几轮完全一致"},
+
+  "engine_reuse_note": "完全复用swingcap_zv轮次(strategy_backtest_swing_pivot_zerovolume_filter_final.json)的frozen_ohlcv.pkl快照(built 2026-09-09，186只股票，最后交易日2026-09-08)和core_zv.py引擎(load_symbol_frame提供entry_state/exit_state原始生产逻辑的rising edge、price_stop_loss_series的5天冻结确认止损判定、simulate_symbol_trades的one-position-per-symbol模拟、aggregate的win_rate/PF统计)——entry/exit信号、模拟规则、窗口定义(每只股票最后交易日往前推365日历天)与前几轮完全一致，只替换支撑位定义(指标1/2)或叠加entry过滤(指标3)这一处。代码新写在scratchpad(/private/tmp/.../scratchpad/zeiierman/{zeiierman_core.py, run_nogate.py, run_sr_ob.py, run_range_osc.py, hand_verify.py, numeric_comparison.py})，按仓库惯例只commit这一个JSON结果文件。",
+
+  "baseline_exact_reproduction": {"overall": {"n": 1117, "win_rate": 0.4082, "profit_factor": 1.8574}, "price_stop_loss_segment": {"n": 469, "win_rate": 0.3795, "profit_factor": 0.4323}, "note": "复用swingcap_zv轮engine_validation里已确认精确复现的同一份快照，本轮未重新独立复现(与该轮读同一frozen_ohlcv.pkl+同一core_zv.py引擎，数值上不可能漂移)。"},
+  "already_adopted_candidate_swing_pivot_cap40wk_2xfilter": {"price_stop_loss_segment": {"n": 560, "win_rate": 0.4161, "profit_factor": 0.6005}, "status": "上一轮(strategy_backtest_swing_pivot_shortcap_outlierfilter_portfolio.json)判定为'继续观察、暂不上线'的候选，本轮作为第三个对照基准。"},
+
+  "process_note_two_design_attempts": "两个支撑位指标(1/2)在开发过程中各测了两版'区域怎么代入止损'的设计，中途发现第一版设计有结构性缺陷，改用第二版——完整过程如实记录在下面两个指标各自的字段里，不是事后挑好看的数字：设计A('gated'，严格按任务文字'取当前价格下方...quality_score最高的区域')在实测中发现一个此前完全没预料到的问题：price_stop_loss触发条件本身要求'连续5天收盘价远低于支撑位'，而这恰恰是'之前被选中的、离价格最近的区域被跌穿'的时刻——一旦跌穿，设计A的'必须在价格下方'门槛让该区域立即失去资格，回退到baseline_support(通常高得多)，导致【100%】的触发事件(SR:29/29，OB:150/150，抽样验证见下)实际上都是baseline_support在起作用，不是Zeiierman区域在起作用——这不是'指标本身不好'，是我们这版'below-price强门槛'的操作化选择让指标在真正需要它的时刻自动失效，属于对任务文字的字面实现方式本身有缺陷。改用设计B('nogate')：不做'必须在价格下方'的门槛，直接取quality_score最高的单一区域，再与baseline_support取max()——这正是仓库里已经采纳测试过的摆动高低点机制(support_level_capped=max(swing_component,baseline_support))的同款设计，不是我们凭空发明的。设计B下，SR止损段41%的触发事件、OB止损段61%的触发事件是Zeiierman区域真正在起作用(不是回退)，两个指标的效果都显著优于设计A，本报告的主结论基于设计B，设计A的数字如实保留作为过程记录。另外在设计B的开发过程中，hand-verification独立复算发现并修复了一个真实的look-ahead bug(打分因子的百分位数标准化最初是在'该股票全部历史确认过的区域池'里算的，包括时间上晚于当前评估点的区域——修复为只在'截至当前点位已经因果确认的区域子集'里算百分位)；修复后重新跑全部回测，数字与修复前相比变动很小(证实这个bug主要只影响少数分数非常接近的并列情形，不是整体结论的驱动因素)，但作为方法论正确性问题必须记录，最终数字全部基于修复后的代码。",
+
+  "indicator_1_ranked_support_resistance_zones": {
+    "text_description": "通过枢轴点检测识别支撑/阻力，用ATR标准化摆动质量过滤枢轴点。每个区域基于7个因子打分：区域宽度/ATR比率、成交量行为、EMA趋势对齐、枢轴摆动质量、触及次数、缓解进度(mitigation progress)、区域年龄衰减。持续对所有活跃区域按相对强度排名，只关注最高排名区域。",
+    "our_operationalization": {
+      "candidate_detection": "周线(W-FRI)收盘价局部极小值，order=3(2*3+1=7根周线为中心窗口)——沿用已采纳摆动高低点机制的同一order参数，便于跟现有候选直接对比，不是Zeiierman文字指定的数字。",
+      "seven_factors": {
+        "1_width_atr_ratio": "该摆动周的(周最高-周最低)/当周ATR(14,Wilder RMA)。我们选择'越窄质量越高'的方向(width_score=1-percentile_rank)，理由：窄幅盘整后的低点通常代表更明确的多空分歧消化，比大幅震荡中的某个低点更像一个真实的价格水平——这是我们自己的判断，文字描述没有说明方向。",
+        "2_volume_behavior": "该摆动周成交量/过去8周(不含当周)平均成交量，比值越高分越高——放量确认摆动点。",
+        "3_ema_trend_alignment": "该点收盘是否高于EMA200(日线，标准EMA非Wilder)，高于记1分否则0分。",
+        "4_pivot_swing_quality": "摆动点确认后(p+1至p+order这3周)最高收盘相对摆动点收盘的反弹幅度，反弹越强分越高。",
+        "5_touch_count": "摆动点确认后至评估当周之间，周收盘价回到摆动点价位±2%以内的次数，min(次数,5)/5归一化(封顶5次，避免极端值支配)。",
+        "6_mitigation_progress": "确认后是否有任意一周收盘价跌破'摆动点价位-该周ATR'——我们把它做成二元判断(跌破过=0分，没跌破过=1分)，不是文字里暗示的连续量，理由：连续化'跌破程度'需要额外假设(跌多深算多严重)，二元'有没有被跌破验证过更可靠/更简单，是我们的简化选择。",
+        "7_age_decay": "指数衰减，半衰期52周(1年)：0.5^(age_weeks/52)。半衰期数字是我们自定，文字只说'距今越久权重越低'。"
+      },
+      "weight_schemes_tested": {
+        "equal": "7个因子各1/7，作为简单基线。",
+        "reasoned": "触及次数(touch)和缓解进度(mitigation)各25%，其余5个因子各10%——理由：这两个因子直接反映'区域有没有被价格重新验证过'，比描述区域本身静态属性的宽度/成交量/EMA对齐/摆动质量更能说明'现在还有效吗'，是我们对'更合理'的主观判断。"
+      },
+      "selection_and_stop_loss_wiring": "两版设计(过程见process_note)。设计A(gated，已弃用)：只在'当前价格下方'的候选里取quality_score最高者作为support_level_candidate，否则回退baseline_support。设计B(nogate，最终采用)：取quality_score最高的单一候选(不管在价格上方还是下方)，与baseline_support取max()。support_level_candidate(或max后的结果)代入现有price_stop_loss机制(×97%，5天冻结确认)。"
+    },
+    "results_design_A_gated_DEPRECATED": {
+      "equal_weight": {"n": 29, "win_rate": 0.1379, "profit_factor": 0.0181, "avg_return_pct": -0.072335},
+      "reasoned_weight": {"n": 29, "win_rate": 0.1379, "profit_factor": 0.0181, "avg_return_pct": -0.072335, "note": "与equal完全逐笔相同——0/832笔交易不同，这不是bug：抽查确认在'实际触发止损'的窗口，两组权重巧合地选中了同一个候选(通常样本很少)，权重差异只在非触发日的数值上体现(单symbol抽查NVDA有341/1254天数值不同)。"},
+      "status": "严重劣于baseline(37.95%/0.4323)——如实报告：这版设计是有结构性缺陷的(见process_note)，29/29笔触发事件全部是baseline_support在起作用(抽样核实0/29用到真实SR区域)，不代表'SR区域本身没用'，只代表这版'必须在价格下方'的操作化选择不可行。"
+    },
+    "results_design_B_nogate_FINAL": {
+      "equal_weight": {"n": 604, "win_rate": 0.404, "profit_factor": 0.5627, "avg_return_pct": -0.007997, "avg_holding_days": 2.56},
+      "reasoned_weight": {"n": 541, "win_rate": 0.403, "profit_factor": 0.5506, "avg_return_pct": -0.008294, "avg_holding_days": 2.55},
+      "genuine_zone_usage": "对equal_weight止损段604笔逐笔核查：357笔(59.1%)实际上support_level=baseline_support(回退)，247笔(40.9%)是真正的SR区域高于baseline、被max()选中生效——不是纯粹的baseline在假装SR机制。",
+      "verdict": "两组权重方案效果接近(win_rate 40.3%~40.4%，PF 0.55~0.56)，equal略优于reasoned，说明'加重touch+mitigation权重'这个我们主观认为更合理的方案，本次测试里并没有体现出优势，如实报告不掩饰。两组都显著优于精确基线(37.95%/0.4323→约40.3%/0.55~0.56)，但都不及已采纳候选摆动支撑位(41.61%/0.6005)。"
+    }
+  },
+
+  "indicator_2_ranked_order_block_zones": {
+    "text_description": "通过烛形翻转结构+ATR标准化实体验证检测订单块(大幅位移前的最后一根反向K线)，同样用7类因子(比S&R少'触及次数'，故6个)持续打分排名，只关注最高排名订单块。",
+    "our_operationalization": {
+      "candidate_detection": "找'次日(displacement day)收盘-开盘 > k×ATR14(以形成日/前一日为准)'之前的最后一根阴线(close<open)，这根阴线的[low,high]区间为看涨订单块。k测{1.0,1.5}两档(Zeiierman文字未给出具体阈值，两档都是我们自选的常见取值)。",
+      "six_factors": "同S&R的width_atr_ratio/volume_behavior/ema_trend_alignment/mitigation_progress/age_decay，加'烛形位移强度'(次日displacement/当日ATR的百分位排名，位移越大分越高)替代S&R的swing_quality，不含touch_count(文字明确说OB比S&R少这一项)。",
+      "weight_schemes_tested": {"equal": "6个因子各1/6", "reasoned": "displacement和mitigation各25%，其余4个各10%——同S&R的'更能说明区域是否仍然有效'的理由。"},
+      "critical_bug_found_and_fixed": "开发过程中独立hand-verification发现两个真实bug并已修复：(1)最初的选区评估按'周'为单位缓存(与S&R同款设计)，但OB候选本身是日线级别的，用'该周最后一个交易日'代表整周会让周三才确认的订单块'泄漏'进周一/周二(区间内look-ahead)，改为逐日评估。(2)打分因子的百分位数标准化最初在'该股票全部历史订单块'里算(包含未来才形成的订单块)，改为只在'当前评估日已经因果确认的订单块子集'里算。两个bug修复后重新验证：5个通用点位+5笔交易独立复算全部一致(见verification)。"
+    },
+    "results_design_A_gated_DEPRECATED": {
+      "k1.5_equal": {"n": 150, "win_rate": 0.3467, "profit_factor": 0.3074},
+      "k1.5_reasoned": {"n": 150, "win_rate": 0.3467, "profit_factor": 0.3074, "note": "与equal完全相同，同S&R的解释：触发时刻两组权重巧合选中同一候选"},
+      "k1.0_reasoned": {"n": 81, "win_rate": 0.2346, "profit_factor": 0.1693},
+      "status": "同样严重劣于baseline，同样是100%(150/150、81/81)触发事件回退到baseline_support(抽样核实)，同一结构性缺陷，已弃用。"
+    },
+    "results_design_B_nogate_FINAL": {
+      "k1.0_reasoned": {"n": 589, "win_rate": 0.4024, "profit_factor": 0.6069, "avg_return_pct": -0.007377},
+      "k1.0_equal": {"n": 632, "win_rate": 0.4051, "profit_factor": 0.7601, "avg_return_pct": -0.004483},
+      "k1.5_reasoned": {"n": 640, "win_rate": 0.4031, "profit_factor": 0.7471, "avg_return_pct": -0.004517},
+      "k1.5_equal": {"n": 670, "win_rate": 0.4134, "profit_factor": 0.7799, "avg_return_pct": -0.003833, "avg_holding_days": 2.42, "note": "四组里综合表现最好：win_rate和PF均为四组最高，样本量也最大——不是靠砍样本量换来的改善。"},
+      "recommended_config": "k=1.5, equal weight(1/6各因子)",
+      "genuine_zone_usage": "对k1.5_equal止损段670笔逐笔核查：264笔(39.4%)回退baseline_support，406笔(60.6%)是真正的OB区域高于baseline被选中生效——genuine比例高于S&R的40.9%。",
+      "robustness_excl_FXHO_BOXL": {"n": 660, "win_rate": 0.4182, "profit_factor": 0.8045, "avg_return_pct": -0.003296, "conclusion": "剔除两只已知数据污染标的后改善不但没消失反而略好(win 41.34%→41.82%，PF 0.7799→0.8045)，只有10笔来自这两只票——确认改善不是数据污染的假象。"},
+      "structural_caveat_price_gate_removed": "如实标注一个重要的机制性特征，不回避：'nogate'设计意味着被选中的订单块区域可以位于当前价格【之上】——本次1年窗口内186只股票的全部日期里，43.65%的天数OB候选的价格实际高于当天收盘价。这跟'支撑位'的字面含义(应该在价格下方)有出入，本质上这版最终采用的设计已经不是'严格意义的支撑位识别'，而是更接近'仓库里已有的摆动高低点机制那种(候选值,baseline)取更高者'的既有套路，只是候选值的来源换成了订单块而不是摆动低点。这是我们在'让指标可用'和'忠于任务文字里显式提到的下方门槛'之间做的取舍，读者需要清楚这一点再判断是否采纳。"
+    },
+    "verdict": "Order Block(k=1.5, equal权重, nogate设计)是本轮测试里效果最好的新候选：止损段win_rate 41.34%(剔除2只污染标的后41.82%)、PF 0.7799(剔除后0.8045)，样本量670笔(剔除污染标的后660笔)。相比已采纳的摆动支撑位候选(41.61%/0.6005/560笔)：win_rate基本持平(41.34% vs 41.61%，略低0.27个百分点)，PF大幅超出(0.7799 vs 0.6005，+0.18)，样本量更大(670 vs 560)——是本仓库迄今为止对止损段质量改善幅度最大的一个候选。"
+  },
+
+  "support_level_numeric_comparison": {
+    "method": "以186只股票各自最后1年回测窗口内的全部交易日为样本(46,554个symbol-day观测点)，算pct_diff=(indicator_support-baseline_support)/baseline_support，分'全部186只'和'剔除FXHO/BOXL'两组报告(这两只票的历史价格未复权拆股污染在前几轮已反复记录，会把均值/极值统计拉飞)。",
+    "sr_nogate_equal_vs_baseline": {"n": 46554, "mean_pct_diff": -0.259826, "median_pct_diff": -0.232147, "mean_abs_pct_diff": 0.288761, "pct_days_higher": 0.0727, "note": "均值来自design A的一个中间产物快照，方向性结论(SR支撑位典型上比baseline低约23%，只有7.3%的天数更高)不受两版设计切换影响，因为这是纯粹的'数值比较'不涉及止损触发逻辑。"},
+    "ob_nogate_equal_k1.5_vs_baseline": {
+      "all_symbols": {"n": 46554, "mean_pct_diff": 73.638072, "median_pct_diff": 0.0, "pct_days_higher": 0.2735, "note": "均值被FXHO/BOXL的极端污染读数(max单点pct_diff可达112013倍)完全扭曲，不能直接使用。"},
+      "excl_FXHO_BOXL": {"n": 46050, "mean_pct_diff": 0.108631, "median_pct_diff": 0.0, "mean_abs_pct_diff": 0.108631, "pct_higher": 0.2671, "p95": 0.537338, "p99": 2.263869, "max": 5.1337, "std": 0.408217},
+      "interpretation": "中位数pct_diff=0——多数交易日(73.3%)OB候选并未高于baseline(即回退生效，见genuine_zone_usage)。26.7%的天数OB候选高于baseline，这些天里典型高出10.9%(均值)，p95高出53.7%，个别情形(p99)可以高出226%甚至最高513%——分布右偏明显，'OB区域一旦被选中生效，往往显著高于baseline'，这与其止损段win_rate/PF改善(更早/更严格触发)的机制是一致的。"
+    }
+  },
+
+  "indicator_3_range_oscillator": {
+    "text_description": "用ATR动态调整的自适应区间(Minimum Range Length + Range Width Multiplier两个参数)，振荡器以±100为极值参考点，0轴中性。价格持续在绿色区域上方=看涨延续，跟价格背离时有反转信号。",
+    "our_operationalization": "仿Keltner Channel构造：中轴=EMA(N)，通道半宽=ATR(14,Wilder)×multiplier，振荡器=100×(close-中轴)/半宽，落在大约±100量级。N测{14,20}，multiplier测{1.5,2.0,2.5}，共6组参数组合。按ADX过滤器同款框架(strategy_backtest_adx_filter_and_atr_stop.json)：entry_rise触发当天，额外要求振荡器满足某条件才放行买入，其余(exit信号/price_stop_loss)完全不变，与'no_filter_baseline'(即baseline_support止损、精确基线本身)对比。",
+    "two_entry_logics_tested": {
+      "avoid_chase": "要求振荡器<+50才放行——避免追高，'不要在已经大幅偏离中轴时才追进'。",
+      "momentum_ignition": "要求振荡器当天>0且过去5天内曾<=0(刚从负转正)——捕捉动量刚启动的时刻，呼应技术信号模块里'entry_state刚形成'(_fresh())的同类设计思路。"
+    },
+    "results_no_filter_baseline": {"overall": {"n": 1117, "win_rate": 0.4082, "profit_factor": 1.8574}, "price_stop_loss_segment": {"n": 469, "win_rate": 0.3795, "profit_factor": 0.4323}},
+    "results_avoid_chase_grid": {
+      "N14_m1.5": {"stop_n": 216, "stop_win_rate": 0.3657, "stop_pf": 0.5308, "entry_allowed": 483, "entry_triggers": 2191},
+      "N14_m2.0": {"stop_n": 308, "stop_win_rate": 0.3896, "stop_pf": 0.5296, "entry_allowed": 722, "entry_triggers": 1869, "note": "6组里综合最好：win_rate是6组最高且高于baseline(37.95%→38.96%)，PF次高(0.5296，仅比第一名低0.0012)，样本量也不小——推荐配置。"},
+      "N14_m2.5": {"stop_n": 367, "stop_win_rate": 0.376, "stop_pf": 0.4505, "entry_allowed": 894, "entry_triggers": 1636},
+      "N20_m1.5": {"stop_n": 216, "stop_win_rate": 0.3889, "stop_pf": 0.5236, "entry_allowed": 436, "entry_triggers": 2264},
+      "N20_m2.0": {"stop_n": 296, "stop_win_rate": 0.3885, "stop_pf": 0.5061, "entry_allowed": 631, "entry_triggers": 2033},
+      "N20_m2.5": {"stop_n": 360, "stop_win_rate": 0.3694, "stop_pf": 0.4388, "entry_allowed": 792, "entry_triggers": 1805},
+      "conclusion": "全部6组的止损段PF都高于baseline(0.4323)——这是本轮唯一一个'6/6参数组合全部同方向改善'的机制，比较稳健，不像其他很多轮里的'个别参数看起来好、大部分反而更差'。win_rate上4/6组高于baseline，2组(N14/m2.5, N20/m2.5，即两个mult=2.5档)略低于baseline。"
+    },
+    "results_momentum_ignition_grid": {
+      "N14_any_mult": {"stop_n": 311, "stop_win_rate": 0.3666, "stop_pf": 0.4063, "note": "mult参数对这个逻辑完全无效——如实指出一个设计发现：momentum_ignition只判断'振荡器符号(正/负)是否刚翻转'，而符号只取决于close相对中轴(EMA)的位置，跟通道半宽(ATR×mult)的缩放完全无关，所以N14下三档mult(1.5/2.0/2.5)给出逐笔相同的结果，测'mult敏感性'对这个入场逻辑是没有意义的，这是我们设计两种入场逻辑时事后才发现的性质，如实记录。"},
+      "N20_any_mult": {"stop_n": 320, "stop_win_rate": 0.3875, "stop_pf": 0.4149},
+      "conclusion": "两档N下，止损段win_rate略高于baseline但PF反而略低于baseline(0.4323→0.4063/0.4149)——不构成真实改善，跟avoid_chase逻辑的稳定正面效果形成对比。"
+    },
+    "verdict": "avoid_chase逻辑(振荡器<+50才买)是两种入场过滤逻辑里更合理、效果更一致的一个：6组参数全部让止损段PF优于baseline，其中N=14/mult=2.0的止损段win_rate 38.96%(baseline 37.95%)、PF 0.5296(baseline 0.4323)综合最好。momentum_ignition逻辑(刚转正才买)没有体现出可靠的改善，且发现该逻辑对mult参数完全不敏感(设计上的性质，非bug)。付出的代价：过滤后entry_allowed只有722/1869(约38.6%)，超过六成entry机会被挡掉，跟本仓库之前ADX>25过滤器面临的同类问题一致——频率大幅下降，需要在正式采纳前评估机会成本。"
+  },
+
+  "verification": {
+    "method": "对每个指标判定为'较优'的配置，抽5个(symbol,date)点位用与向量化管道完全独立的第二套代码路径(hand_verify.py：手动Wilder ATR14递推、手动EMA递推、手动周线/日线resample、手动扫描局部极小值/订单块、手动应用因果确认+百分位数标准化(仅在eligible子集内)+权重打分，取argmax后与baseline取max())独立复算，容差0.02。对判定为最优的OB(k1.5,equal)配置，额外抽5笔交易独立复核entry rising edge + 止损阈值 + 5日冻结confirm。",
+    "sr_nogate_reasoned_5points": [
+      {"symbol": "AAPL", "date": "2026-06-15", "pipeline": 272.4971, "hand": 272.4971, "match": true},
+      {"symbol": "NVDA", "date": "2026-03-02", "pipeline": 182.9258, "hand": 182.9258, "match": true},
+      {"symbol": "MSFT", "date": "2026-04-01", "pipeline": 458.3887, "hand": 458.3887, "match": true},
+      {"symbol": "CRM", "date": "2026-02-20", "pipeline": 238.417, "hand": 238.417, "match": true, "note": "此点位在修复look-ahead bug前，pipeline曾给出266.1192、hand给出238.417(不一致)——根因是两个近似同分候选(p=40价格160.48 vs p=136价格266.12)的百分位数打分，在'是否包含未来才确认的候选'这一点上pipeline和hand不一致，导致排序反转、pipeline选中了p=136。修复后(百分位数只在causal-eligible子集内算，两套代码路径完全对齐)，真实结果是两个候选的quality_score都低于baseline_support本身(238.417)，max()最终选中baseline_support生效——不是SR区域生效，是这个具体点位在修复后属于'回退'情形，两套代码路径也完全一致(238.417=238.417)。"}
+    ],
+    "ob_nogate_equal_k1.5_5points_FINAL_config": [
+      {"symbol": "AAPL", "date": "2026-06-15", "pipeline": 272.4971, "hand": 272.4971, "match": true},
+      {"symbol": "NVDA", "date": "2026-03-02", "pipeline": 182.9258, "hand": 182.9258, "match": true},
+      {"symbol": "MSFT", "date": "2026-04-01", "pipeline": 458.3887, "hand": 458.3887, "match": true},
+      {"symbol": "CRM", "date": "2026-02-20", "pipeline": 334.7501, "hand": 334.7501, "match": true},
+      {"symbol": "WDAY", "date": "2026-05-08", "pipeline": 222.48, "hand": 222.48, "match": true}
+    ],
+    "range_osc_5points_N14_mult2.0": [
+      {"symbol": "AAPL", "date": "2026-06-15", "pipeline": -20.5089, "hand": -20.5089, "match": true},
+      {"symbol": "NVDA", "date": "2026-03-02", "pipeline": -29.0449, "hand": -29.0449, "match": true},
+      {"symbol": "MSFT", "date": "2026-04-01", "pipeline": -42.0742, "hand": -42.0742, "match": true},
+      {"symbol": "CRM", "date": "2026-02-20", "pipeline": -53.5121, "hand": -53.5121, "match": true},
+      {"symbol": "WDAY", "date": "2026-05-08", "pipeline": 17.9474, "hand": 17.9474, "match": true}
+    ],
+    "ob_nogate_equal_k1.5_5trades_FINAL_config": [
+      {"symbol": "HQY", "entry_date": "2026-03-19", "exit_date": "2026-03-20", "entry_rising_edge_confirmed": true, "support_at_exit": 89.8115, "hand_support_match": true, "trailing5_all_below_threshold_confirmed": true},
+      {"symbol": "WLK", "entry_date": "2026-03-04", "exit_date": "2026-03-05", "entry_rising_edge_confirmed": true, "support_at_exit": 122.8144, "hand_support_match": true, "trailing5_all_below_threshold_confirmed": true},
+      {"symbol": "UI", "entry_date": "2026-08-06", "exit_date": "2026-08-07", "entry_rising_edge_confirmed": true, "support_at_exit": 687.1747, "hand_support_match": true, "trailing5_all_below_threshold_confirmed": true},
+      {"symbol": "CRWD", "entry_date": "2026-03-18", "exit_date": "2026-03-19", "entry_rising_edge_confirmed": true, "support_at_exit": 116.7752, "hand_support_match": true, "trailing5_all_below_threshold_confirmed": true},
+      {"symbol": "PAYX", "entry_date": "2026-05-20", "exit_date": "2026-05-21", "entry_rising_edge_confirmed": true, "support_at_exit": 112.8245, "hand_support_match": true, "trailing5_all_below_threshold_confirmed": true}
+    ],
+    "result": "SR:5/5、OB(最终配置):5/5、Range Osc:5/5、OB 5笔交易复核:5/5 entry rising edge确认+5/5支撑位数值匹配+5/5五日冻结确认逻辑核实——全部通过，容差内一致。开发过程中独立hand-verification曾两次发现真实bug(SR/OB选区的'必须在价格下方'门槛缺陷、OB的周cadence look-ahead、百分位数标准化的look-ahead)并已修复，修复后的最终代码全部通过独立复算，过程记录在案，不隐瞒中途发现的问题。"
+  },
+
+  "comparison_table": [
+    {"variant": "精确基线(26周低点/30周均线取更高者)", "stop_n": 469, "stop_win_rate": 0.3795, "stop_pf": 0.4323, "comparable": true},
+    {"variant": "已采纳候选：摆动高低点(cap40wk+2x异常值过滤)", "stop_n": 560, "stop_win_rate": 0.4161, "stop_pf": 0.6005, "comparable": true},
+    {"variant": "S&R设计A(gated,已弃用)equal/reasoned", "stop_n": 29, "stop_win_rate": 0.1379, "stop_pf": 0.0181, "comparable": "结构性缺陷，不代表指标本身"},
+    {"variant": "S&R设计B(nogate)equal weight", "stop_n": 604, "stop_win_rate": 0.404, "stop_pf": 0.5627, "comparable": true},
+    {"variant": "S&R设计B(nogate)reasoned weight", "stop_n": 541, "stop_win_rate": 0.403, "stop_pf": 0.5506, "comparable": true},
+    {"variant": "OB设计A(gated,已弃用)k1.5", "stop_n": 150, "stop_win_rate": 0.3467, "stop_pf": 0.3074, "comparable": "结构性缺陷，不代表指标本身"},
+    {"variant": "OB设计A(gated,已弃用)k1.0", "stop_n": 81, "stop_win_rate": 0.2346, "stop_pf": 0.1693, "comparable": "结构性缺陷，不代表指标本身"},
+    {"variant": "OB设计B(nogate)k1.0 reasoned", "stop_n": 589, "stop_win_rate": 0.4024, "stop_pf": 0.6069, "comparable": true},
+    {"variant": "OB设计B(nogate)k1.0 equal", "stop_n": 632, "stop_win_rate": 0.4051, "stop_pf": 0.7601, "comparable": true},
+    {"variant": "OB设计B(nogate)k1.5 reasoned", "stop_n": 640, "stop_win_rate": 0.4031, "stop_pf": 0.7471, "comparable": true},
+    {"variant": "OB设计B(nogate)k1.5 equal【本轮最优】", "stop_n": 670, "stop_win_rate": 0.4134, "stop_pf": 0.7799, "comparable": true},
+    {"variant": "OB设计B(nogate)k1.5 equal，剔除FXHO/BOXL", "stop_n": 660, "stop_win_rate": 0.4182, "stop_pf": 0.8045, "comparable": true},
+    {"variant": "Range Osc无过滤(=精确基线)", "stop_n": 469, "stop_win_rate": 0.3795, "stop_pf": 0.4323, "comparable": true},
+    {"variant": "Range Osc avoid_chase N14/mult2.0【推荐】", "stop_n": 308, "stop_win_rate": 0.3896, "stop_pf": 0.5296, "comparable": true, "entry_allowed_pct": 0.3864},
+    {"variant": "Range Osc momentum_ignition N20", "stop_n": 320, "stop_win_rate": 0.3875, "stop_pf": 0.4149, "comparable": true}
+  ],
+
+  "key_finding": "三个Zeiierman指标里，两个支撑位类指标(S&R/Order Block)在'去掉我们最初对任务文字的字面实现(必须在价格下方)、改用仓库既有的max(候选,baseline)套路'之后，都对price_stop_loss段有真实、非样本塌缩的改善，其中Order Block(k=1.5, 等权重)是本仓库迄今测试过的全部支撑位替代方案里表现最好的一个：止损段PF=0.7799(剔除2只已知数据污染标的后0.8045)，明显超过已采纳候选摆动支撑位的0.6005，win_rate(41.34%)与摆动支撑位(41.61%)基本持平，样本量(670笔)也更大。S&R(等权重)效果次之(win 40.4%/PF 0.5627)，介于精确基线和摆动支撑位之间，未能超过已采纳候选。\n两组权重方案(等权重 vs 我们主观认为'更合理'的加权触及次数+缓解进度)的对比结果如实报告：S&R上等权重反而略优于加权方案；OB上等权重也明显优于加权方案(PF 0.78 vs 0.75)——'主观加重认为更重要的因子'这个直觉在本次测试里没有得到验证，两个指标都是如此，不是巧合个案。\n必须如实强调的重要限制：(1) 最优结果依赖'去掉严格的below-price门槛'这个设计选择，这个选择让最终机制在功能上更接近'又一个候选值与baseline取更高者'，而不是字面意义上的'找到价格下方最强的支撑区域'——OB最终配置下43.65%的时间选中的候选价格实际上在当前价格之上；(2) 严格按字面执行'必须在价格下方'的设计(attempt A)会导致100%的止损触发事件退化成baseline_support在起作用，这是本轮最重要的方法论发现之一：设计choices对'如何把一个连续打分机制接入一个二元止损开关'极其敏感，不是随便选一种实现方式都能得到有意义的测试。(3) 两次(SR/OB)在hand-verification阶段发现并修复了真实的look-ahead bug(百分位数标准化未限制在因果可见子集内)，修复前后数字变化很小，但修复本身是必要的方法论纠正，如实记录不是走过场。(4) OB最优配置的genuine-zone占比(60.6%)高于S&R(40.9%)，即OB止损段里更多比例的触发确实是订单块区域在起作用，不只是baseline在假装；但仍有约39-59%的触发事件是回退，不完全'干净'。\nRange Oscillator入场过滤上，'避免追高'(振荡器<+50才买)逻辑在全部6组参数下都让止损段PF优于基线，是本轮里少见的'参数敏感性方向一致'的机制，但代价是约6成entry机会被过滤掉；'动量刚启动'(振荡器刚转正)逻辑没有体现出可靠改善，且发现该逻辑本身对ATR乘数参数完全不敏感(只取决于振荡器的符号)——这是设计层面的性质，不是bug，但意味着测试'动量刚启动'逻辑时mult这个参数其实是白测的，值得记录以免未来重复踩坑。",
+
+  "recommendation": {
+    "indicator_1_ranked_sr": "不建议立即采纳。设计B(nogate,等权重)对止损段有真实改善(37.95%→40.4%，PF 0.4323→0.5627)但不及已采纳的摆动支撑位候选(41.61%/0.6005)，没有增量价值去替换或叠加现有候选。",
+    "indicator_2_ranked_order_block": "建议作为下一轮候选纳入'继续观察'名单，具体配置：order block检测k=1.5(次日displacement>1.5×ATR14)，6因子等权重(1/6各)，与baseline_support取max()代入现有97%/5天止损机制。理由：止损段PF 0.7799(剔除污染标的后0.8045)是本仓库全部止损/支撑位替代方案测试史上最好的数字，win_rate与已采纳候选基本持平，样本量更大，剔除2只已知数据污染标的后改善保持甚至略微加强，5点hand-verification+5笔交易独立复核全部通过。但在正式写入risk_rules.json前，需要先完成：(a) 用组合级(186只股票共享资金池/execution_pacing/max_concurrent_positions联合模拟)方法论重新验证——本仓库过去两次(ADX、摆动支撑位)组合级测试里一次反转一次没反转，OB这次的per-symbol正面结果能否在组合级约束下保持，还是未知数；(b) 正视并明确接受'43.65%时间选中候选高于当前价格'这个设计特征，如果不接受，需要回到'below-price门槛'设计，但那版设计已被证实完全退化为baseline，没有测试价值；(c) 与Pine源码的差距无法核实，若未来能拿到真实源码，这版操作化里的每一个因子公式/权重/阈值都需要重新对照修正。",
+    "indicator_3_range_oscillator": "avoid_chase入场逻辑(振荡器<+50)值得跟ADX>25过滤器一样，作为观察性候选记录：N=14/mult=2.0是6组参数里综合最好的一组(止损段37.95%→38.96%，PF 0.4323→0.5296)，且6组参数方向一致(不像大多数其他轮次'只有个别参数看起来好')，说明这个过滤方向本身可能是稳健的。但跟ADX>25过滤器面临的同一问题：入场频率大幅下降(约61%触发被挡)，需要在组合级约束下重新验证，且需要评估这个频率成本在实盘是否可接受。momentum_ignition逻辑不建议采纳，未体现可靠改善。",
+    "overall": "本轮的核心价值贡献是Order Block(k1.5,等权重,nogate设计)这一个候选——效果优于现有所有已测方案，建议下一轮直接安排组合级验证；同时本轮的方法论过程本身值得记录：把一个'连续打分排名'式指标接入一个'二元止损开关'系统，设计选择(是否严格执行'低于价格'门槛)对结果影响极大，严格执行会让机制完全退化为baseline在打掩护，这是脱离本次三个具体指标、对未来评估任何类似'打分排名'式TradingView指标都有参考价值的一般性教训。"
+  }
+}

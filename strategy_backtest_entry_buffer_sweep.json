@@ -1,0 +1,359 @@
+{
+  "built_date": "2026-09-08",
+  "methodology_note": "在strategy_backtest_entry_support_gated.json(entry支撑位过滤，二元0%阈值判断)的基础上，把entry buffer从二元判断换成梯度阈值扫描：entry_rise触发当天要求pct_below_weekly_support < -threshold(价格距支撑位至少有threshold这么大的缓冲空间)才允许买入，threshold取{0%,3%,5%,8%,10%}五档。本次止损侧统一改用risk_rules.json的live参数(3%缓冲/5天确认)，不是strategy_backtest_diagnostics.json验证之前、strategy_backtest_entry_support_gated.json构建时用的旧3天确认——因此3pct/5pct/8pct/10pct这四档是全新独立模拟(用同一份向量化day-aligned resample+merge_asof的支撑位/止损数据，只有entry gate阈值不同，逐symbol加载一次、四档复用)。0pct这一档为节省重复计算，直接引用strategy_backtest_entry_support_gated.json的既有结果，但那份用的是旧3天确认止损参数——已在下方0pct.note里标注这个口径差异，不能跟其余四档直接同口径对比，只能参考entry阈值本身(=0)在支撑位过滤逻辑上的效果。支撑位公式/符号约定(pct_below_weekly_support = (support_level-close)/support_level，<0即价格高于支撑位)与technical_signals.check_trend_gate()完全一致。5天确认止损的向量化方法(冻结当天自己的stop_threshold，跟5根[t,t-1,...,t-4]原始收盘价的AND条件比较，不是逐日各自阈值)与strategy_backtest_diagnostics.json的h2_sweep_v2.py验证过的方法相同，已用check_trend_gate(price_stop_loss_confirm_days=5)对stoploss触发做过独立点位复核(见诊断文件)；本次新增的验证是entry buffer阈值本身，用check_trend_gate()的pct_below_weekly_support字段对threshold=5%和8%两档各抽查5笔买入交易独立复核。",
+  "thresholds": {
+    "3pct": {
+      "threshold_pct": 0.03,
+      "total_trades": 512,
+      "win_rate": 0.416,
+      "profit_factor": 2.2135,
+      "avg_return_pct": 0.058903,
+      "median_return_pct": -0.024238,
+      "price_stop_loss_segment": {
+        "total_trades": 8,
+        "win_rate": 0.0,
+        "avg_return_pct": -0.140098,
+        "median_return_pct": -0.128707,
+        "profit_factor": 0.0,
+        "avg_holding_days": 13.88,
+        "max_single_loss_pct": -0.200135,
+        "max_single_gain_pct": -0.09485
+      },
+      "exit_signal_segment": {
+        "total_trades": 504,
+        "win_rate": 0.4226,
+        "avg_return_pct": 0.062061,
+        "median_return_pct": -0.022888,
+        "profit_factor": 2.318,
+        "avg_holding_days": 42.99,
+        "max_single_loss_pct": -0.563941,
+        "max_single_gain_pct": 2.815119
+      },
+      "overall": {
+        "win_rate": 0.416,
+        "avg_return_pct": 0.058903,
+        "median_return_pct": -0.024238,
+        "profit_factor": 2.2135,
+        "avg_holding_days": 42.53
+      },
+      "total_entry_triggers": 1569,
+      "total_entry_allowed": 563,
+      "total_entry_blocked_by_support_gate": 1006,
+      "open_positions_at_window_end_total": 51,
+      "note": "止损参数: 3%缓冲/5天确认(live risk_rules.json配置)。entry buffer阈值: pct_below_weekly_support < -3%。"
+    },
+    "5pct": {
+      "threshold_pct": 0.05,
+      "total_trades": 478,
+      "win_rate": 0.4121,
+      "profit_factor": 2.2315,
+      "avg_return_pct": 0.060936,
+      "median_return_pct": -0.023172,
+      "price_stop_loss_segment": {
+        "total_trades": 5,
+        "win_rate": 0.0,
+        "avg_return_pct": -0.163376,
+        "median_return_pct": -0.156725,
+        "profit_factor": 0.0,
+        "avg_holding_days": 14.6,
+        "max_single_loss_pct": -0.21048,
+        "max_single_gain_pct": -0.124281
+      },
+      "exit_signal_segment": {
+        "total_trades": 473,
+        "win_rate": 0.4165,
+        "avg_return_pct": 0.063308,
+        "median_return_pct": -0.021903,
+        "profit_factor": 2.3113,
+        "avg_holding_days": 43.06,
+        "max_single_loss_pct": -0.563941,
+        "max_single_gain_pct": 2.815119
+      },
+      "overall": {
+        "win_rate": 0.4121,
+        "avg_return_pct": 0.060936,
+        "median_return_pct": -0.023172,
+        "profit_factor": 2.2315,
+        "avg_holding_days": 42.76
+      },
+      "total_entry_triggers": 1652,
+      "total_entry_allowed": 527,
+      "total_entry_blocked_by_support_gate": 1125,
+      "open_positions_at_window_end_total": 49,
+      "note": "止损参数: 3%缓冲/5天确认(live risk_rules.json配置)。entry buffer阈值: pct_below_weekly_support < -5%。"
+    },
+    "8pct": {
+      "threshold_pct": 0.08,
+      "total_trades": 435,
+      "win_rate": 0.4023,
+      "profit_factor": 2.1159,
+      "avg_return_pct": 0.056292,
+      "median_return_pct": -0.024911,
+      "price_stop_loss_segment": {
+        "total_trades": 2,
+        "win_rate": 0.0,
+        "avg_return_pct": -0.162698,
+        "median_return_pct": -0.162698,
+        "profit_factor": 0.0,
+        "avg_holding_days": 15.5,
+        "max_single_loss_pct": -0.200135,
+        "max_single_gain_pct": -0.125261
+      },
+      "exit_signal_segment": {
+        "total_trades": 433,
+        "win_rate": 0.4042,
+        "avg_return_pct": 0.057304,
+        "median_return_pct": -0.024618,
+        "profit_factor": 2.1477,
+        "avg_holding_days": 41.93,
+        "max_single_loss_pct": -0.563941,
+        "max_single_gain_pct": 2.815119
+      },
+      "overall": {
+        "win_rate": 0.4023,
+        "avg_return_pct": 0.056292,
+        "median_return_pct": -0.024911,
+        "profit_factor": 2.1159,
+        "avg_holding_days": 41.81
+      },
+      "total_entry_triggers": 1794,
+      "total_entry_allowed": 482,
+      "total_entry_blocked_by_support_gate": 1312,
+      "open_positions_at_window_end_total": 47,
+      "note": "止损参数: 3%缓冲/5天确认(live risk_rules.json配置)。entry buffer阈值: pct_below_weekly_support < -8%。"
+    },
+    "10pct": {
+      "threshold_pct": 0.1,
+      "total_trades": 403,
+      "win_rate": 0.4045,
+      "profit_factor": 2.1802,
+      "avg_return_pct": 0.060195,
+      "median_return_pct": -0.024911,
+      "price_stop_loss_segment": {
+        "total_trades": 1,
+        "win_rate": 0.0,
+        "avg_return_pct": -0.200135,
+        "median_return_pct": -0.200135,
+        "profit_factor": 0.0,
+        "avg_holding_days": 18.0,
+        "max_single_loss_pct": -0.200135,
+        "max_single_gain_pct": -0.200135
+      },
+      "exit_signal_segment": {
+        "total_trades": 402,
+        "win_rate": 0.4055,
+        "avg_return_pct": 0.060843,
+        "median_return_pct": -0.024765,
+        "profit_factor": 2.2017,
+        "avg_holding_days": 42.14,
+        "max_single_loss_pct": -0.563941,
+        "max_single_gain_pct": 2.815119
+      },
+      "overall": {
+        "win_rate": 0.4045,
+        "avg_return_pct": 0.060195,
+        "median_return_pct": -0.024911,
+        "profit_factor": 2.1802,
+        "avg_holding_days": 42.08
+      },
+      "total_entry_triggers": 1861,
+      "total_entry_allowed": 448,
+      "total_entry_blocked_by_support_gate": 1413,
+      "open_positions_at_window_end_total": 45,
+      "note": "止损参数: 3%缓冲/5天确认(live risk_rules.json配置)。entry buffer阈值: pct_below_weekly_support < -10%。"
+    },
+    "0pct": {
+      "threshold_pct": 0.0,
+      "total_trades": 566,
+      "win_rate": 0.4064,
+      "profit_factor": 2.1491,
+      "avg_return_pct": 0.055034,
+      "median_return_pct": -0.027959,
+      "price_stop_loss_segment": {
+        "total_trades": 60,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "avg_return_pct": -0.095734,
+        "median_return_pct": -0.085372,
+        "avg_holding_days": 13.92
+      },
+      "exit_signal_segment": {
+        "total_trades": 506,
+        "win_rate": 0.4545,
+        "profit_factor": 2.727,
+        "avg_return_pct": 0.072911,
+        "median_return_pct": -0.015716,
+        "avg_holding_days": 44.2
+      },
+      "overall": {
+        "win_rate": 0.4064,
+        "avg_return_pct": 0.055034,
+        "median_return_pct": -0.027959,
+        "profit_factor": 2.1491,
+        "avg_holding_days": 40.99
+      },
+      "total_entry_triggers": 1475,
+      "total_entry_allowed": 617,
+      "total_entry_blocked_by_support_gate": 858,
+      "open_positions_at_window_end_total": 51,
+      "note": "引用自strategy_backtest_entry_support_gated.json的既有结果，未重新计算。⚠️ 口径差异：该文件的止损参数是3%缓冲/3天确认(旧参数)，不是本次统一使用的3%缓冲/5天确认(live risk_rules.json配置)——因此0pct这一档跟3pct/5pct/8pct/10pct这四档不是完全同口径对比，只能大致参考其entry-side阈值=0的效果，不能把它当作\"threshold=0\"在5天确认止损下的真实结果。"
+    }
+  },
+  "comparison_table": [
+    {
+      "threshold": "0pct",
+      "total_trades": 566,
+      "psl_n": 60,
+      "psl_win_rate": 0.0,
+      "psl_profit_factor": 0.0,
+      "overall_win_rate": 0.4064,
+      "overall_profit_factor": 2.1491,
+      "overall_median_return_pct": -0.027959,
+      "entry_triggers": 1475,
+      "entry_allowed": 617
+    },
+    {
+      "threshold": "3pct",
+      "total_trades": 512,
+      "psl_n": 8,
+      "psl_win_rate": 0.0,
+      "psl_profit_factor": 0.0,
+      "overall_win_rate": 0.416,
+      "overall_profit_factor": 2.2135,
+      "overall_median_return_pct": -0.024238,
+      "entry_triggers": 1569,
+      "entry_allowed": 563
+    },
+    {
+      "threshold": "5pct",
+      "total_trades": 478,
+      "psl_n": 5,
+      "psl_win_rate": 0.0,
+      "psl_profit_factor": 0.0,
+      "overall_win_rate": 0.4121,
+      "overall_profit_factor": 2.2315,
+      "overall_median_return_pct": -0.023172,
+      "entry_triggers": 1652,
+      "entry_allowed": 527
+    },
+    {
+      "threshold": "8pct",
+      "total_trades": 435,
+      "psl_n": 2,
+      "psl_win_rate": 0.0,
+      "psl_profit_factor": 0.0,
+      "overall_win_rate": 0.4023,
+      "overall_profit_factor": 2.1159,
+      "overall_median_return_pct": -0.024911,
+      "entry_triggers": 1794,
+      "entry_allowed": 482
+    },
+    {
+      "threshold": "10pct",
+      "total_trades": 403,
+      "psl_n": 1,
+      "psl_win_rate": 0.0,
+      "psl_profit_factor": 0.0,
+      "overall_win_rate": 0.4045,
+      "overall_profit_factor": 2.1802,
+      "overall_median_return_pct": -0.024911,
+      "entry_triggers": 1861,
+      "entry_allowed": 448
+    }
+  ],
+  "_build_stats": {
+    "total_elapsed_seconds": 56.8,
+    "load_seconds": 56.5,
+    "per_threshold_simulate_seconds": {
+      "3pct": 0.083,
+      "5pct": 0.062,
+      "8pct": 0.056,
+      "10pct": 0.053
+    },
+    "n_symbols_loaded": 186,
+    "n_symbols_total": 186,
+    "n_errors": 0,
+    "errors": {}
+  },
+  "verification": {
+    "method": "对threshold=5%和8%两档各随机(seed=42)抽查5笔买入交易，用technical_signals.check_trend_gate(symbol, entry_date)独立点位函数复核pct_below_weekly_support数值，要求point_fn值 < -threshold且与向量化值一致(容差0.01)。",
+    "result": "10/10全部通过，向量化值与check_trend_gate()点位函数值逐笔完全一致(误差<0.0001，远小于0.01容差)。",
+    "threshold_5pct_samples": [
+      {
+        "symbol": "HIMS",
+        "entry_date": "2025-09-11",
+        "vectorized": -0.1239,
+        "point_fn": -0.1239,
+        "match": true
+      },
+      {
+        "symbol": "MPWR",
+        "entry_date": "2026-07-23",
+        "vectorized": -0.0822,
+        "point_fn": -0.0822,
+        "match": true
+      },
+      {
+        "symbol": "INTC",
+        "entry_date": "2026-06-18",
+        "vectorized": -1.0416,
+        "point_fn": -1.0416,
+        "match": true
+      },
+      {
+        "symbol": "CFG",
+        "entry_date": "2025-11-07",
+        "vectorized": -0.1251,
+        "point_fn": -0.1251,
+        "match": true
+      },
+      {
+        "symbol": "VISN",
+        "entry_date": "2026-02-10",
+        "vectorized": -0.1722,
+        "point_fn": -0.1722,
+        "match": true
+      }
+    ],
+    "threshold_8pct_samples": [
+      {
+        "symbol": "HPE",
+        "entry_date": "2026-08-04",
+        "vectorized": -0.5906,
+        "point_fn": -0.5906,
+        "match": true
+      },
+      {
+        "symbol": "ONDS",
+        "entry_date": "2026-05-28",
+        "vectorized": -0.3609,
+        "point_fn": -0.3609,
+        "match": true
+      },
+      {
+        "symbol": "IONQ",
+        "entry_date": "2025-09-10",
+        "vectorized": -0.2492,
+        "point_fn": -0.2492,
+        "match": true
+      },
+      {
+        "symbol": "HOOD",
+        "entry_date": "2025-11-03",
+        "vectorized": -0.492,
+        "point_fn": -0.492,
+        "match": true
+      },
+      {
+        "symbol": "MPWR",
+        "entry_date": "2026-04-06",
+        "vectorized": -0.1622,
+        "point_fn": -0.1622,
+        "match": true
+      }
+    ],
+    "pipeline_sanity_check": "额外独立性检验(未写入正式对照，仅内部验证)：完全不加entry过滤(support_gate恒为True)、只切5天确认止损，全186只股票跑出price_stop_loss段n=469，与strategy_backtest_diagnostics.json的h2_sweep_v2.py独立验证过的variant_3pct_5day.stop_loss_segment.n=469精确一致，确认本次向量化5天确认止损实现与已验证方法完全等价。"
+  },
+  "key_finding": "5天确认止损参数(已经是live配置)本身就已经把price_stop_loss段的交易量从旧3天确认的537笔(全无entry过滤)压缩到469笔——降幅有限；但一旦叠加entry支撑位缓冲过滤(哪怕只是threshold=0%的基本版)，price_stop_loss段交易量会被极度压缩：threshold=0%(仍用旧3天确认，仅供参考)是60笔，本次用5天确认+threshold=3%/5%/8%/10%分别只剩8/5/2/1笔——这已经不是'改善'而是'样本量小到几乎测不出统计意义'。更关键的是：这剩下的极少数笔，无论哪个threshold，胜率全部是0%(AAOI、VIAV、SNPS、SNAP、MSFT、ESI、PRVA、SDGR等标的的price_stop_loss退出，单笔亏损区间-9.5%~-21%)——即使entry时缓冲已经有9-12%(如AAOI买入时pct_below_weekly_support=-11.6%，VIAV为-9.5%)，价格依然能跌穿5天确认止损线并录得两位数亏损。这说明entry buffer阈值只是把价格已经在下跌通道中的坏单挡在门外(减少了触发频率)，并没有让'一旦触发'这件事本身变得更好赚——一旦触发，无论买入时缓冲多大，结果仍然是亏损退出。",
+  "recommendation": "不建议单独把entry buffer threshold作为一条新的live规则采纳，理由：\n1) 样本量问题：3pct/5pct/8pct/10pct四档的price_stop_loss段分别只有8/5/2/1笔交易，n=1-2的档位(8pct/10pct)在统计意义上完全不可信，不能用来判断'哪个阈值更优'——这不是找到了甜蜜点，而是样本被压缩到失去统计意义。\n2) 整体指标(overall win_rate/profit_factor/median_return_pct)在3pct→10pct之间基本走平，没有单调改善：overall_win_rate 41.6%→41.21%→40.23%→40.45%，overall_profit_factor 2.21→2.23→2.12→2.18，median_return_pct -2.42%→-2.32%→-2.49%→-2.49%——阈值越高，只是把交易量从563笔进一步砍到448笔(entry_allowed)，整体质量没有对应改善，说明3pct以上继续收紧缓冲只是在丢交易量，换不来质量。\n3) exit_signal段(占绝大多数交易)反而随threshold升高小幅走弱：win_rate从3pct的42.26%降到10pct的40.55%，profit_factor从2.318降到2.202——说明更严格的支撑位缓冲要求并不是在优选'更好的入场点'，更像是在无差别地砍交易量，其中也包含了本来能盈利的入场。\n4) price_stop_loss段本身的问题(一旦触发即全部亏损)没有被任何threshold真正解决——只是被'不让它发生'掩盖了。如果未来交易量走高、psl段样本数回升到有统计意义的规模，不排除0%胜率会持续存在，说明根子问题(价格一旦跌穿支撑位并连续5天收不回，后续大概率继续亏)是止损本身触发时机偏晚的结构性问题，不是entry buffer能解决的维度。\n综合结论：如果一定要在这五档里选，threshold=3%是相对最均衡的一档——它比0%多挡掉了几乎所有psl段的伤害(0%是60笔0%胜率，3pct在5天确认下已经只剩8笔)，同时比5%/8%/10%保留了更多交易量(512笔 vs 478/435/403)且overall指标几乎与它们打平，没有为了砍交易量而砍。但这更像是'成本最小的折衷'而不是'找到了真正的解'——建议：(a) 暂不把entry buffer threshold写进live规则，因为证据强度不足以支撑任何具体数值；(b) 若要采纳，3%是风险最低的起点，但需要在未来更大样本下重新验证psl段胜率是否仍然是0%；(c) 5天确认止损参数继续保留(已经是live配置，这次的分析没有发现需要回退的理由)。"
+}

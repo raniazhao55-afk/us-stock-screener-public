@@ -1,0 +1,179 @@
+{
+  "built_date": "2026-09-09",
+  "purpose": "第三轮摆动支撑位(swing pivot support)补测，承接strategy_backtest_swing_pivot_lookback_capped_refreshed.json未解决的两个问题。任务A：把回看上限从104/156周缩短到{30,40,52}周，检验FXHO/BOXL污染(此前查明落在30-45周内)这次能否被排除，以及缩短窗口是否会稀释'看得比baseline更远'这个机制本身的价值。任务B：给'取更高者'兜底加异常值过滤，防止swing分量本身是坏数据时被取更高者放大。任务C：本repo第二次组合级(portfolio-level)总收益测试(第一次是ADX那次)，把摆动支撑位机制放进186只股票共享资金/execution_pacing/max_concurrent_positions的真实账户约束下，检验per-symbol独立测试的改善会不会像ADX那次一样在组合级约束下消失或反转。",
+
+  "environment_and_engine_note": "本次代码不在us-stock-screener目录本身（该目录只存放JSON回测报告），而是复用~/.claude/skills/us-stock-data的lib/技术信号生产代码（lib/technical_signals._prepared_df()提供entry_state/exit_state原始生产逻辑，lib/stockstats_utils.load_ohlcv()提供带缓存的OHLCV数据）。186只股票的OHLCV缓存已确认全部覆盖到2026-09-08收盘（186/186命中，0个NaN行），未触发新的网络抓取。核心引擎（因果安全的周度支撑位向量化重建、swing pivot局部极小值检测、回看上限过滤、异常值过滤、单标的与组合级两套状态机）全部新写在scratchpad(/private/tmp/.../scratchpad/swingcap/{core.py,portfolio.py,run_taskA.py,run_taskB.py,run_taskC.py})，按仓库既有惯例只commit这一个JSON结果文件。",
+
+  "engine_validation": {
+    "baseline_exact_reproduction": "先用本次引擎独立复现strategy_backtest_swing_pivot_lookback_capped_refreshed.json的precondition_baseline_reproduction_refreshed.reproduction_result_after_cache_refresh(目标：overall n=1117/win_rate=0.4082/PF=1.8577；price_stop_loss_segment n=469/win_rate=0.3795/PF=0.4323)。首次尝试得到overall n=1155(偏差+38笔)，排查后发现根因：本次引擎最初没有实现check_trend_gate()自带的insufficient_history闸门(月K<30根或周K<40根时price_stop_loss永远不触发)，导致少数历史较短的次新股在窗口早期产生了生产环境本不会有的止损触发。补上这个闸门(按'截至当日的月/周K累计根数'因果重建)后，笔数精确复现：overall n=1117(完全一致)/win_rate=0.4082(完全一致)/PF=1.8574(与目标1.8577相差0.0003，四位小数内一致)；price_stop_loss_segment n=469(完全一致)/win_rate=0.3795(完全一致)/PF=0.4323(完全一致)。以此为基线，确认引擎可信，后续任务A/B/C全部建立在这个已验证引擎之上。",
+    "uncapped_swing_component_spotcheck": "在加回看上限前，先用本次引擎重新计算strategy_backtest_chande_kroll_and_swing_pivot.json验证过的5个手算点位(VRTX/WDAY/FXHO/BOXL/ZS)，5/5与原文件数值完全一致(如FXHO 2026-06-04=4455.0000，BOXL 2026-02-10=63.0000)，确认causal周度支撑位与swing pivot局部极小值检测两个核心组件的重新实现与此前两轮完全等价，不是另一套可能存在偏差的近似。"
+  },
+
+  "task_a_shorter_lookback_caps": {
+    "method": "与strategy_backtest_swing_pivot_lookback_capped_refreshed.json完全相同的方法论：186只股票universe(程序化去重提取，与此前三轮一致)、entry_rise/exit_rise取自lib.technical_signals._prepared_df()的六线rising edge（entry_state/exit_state当天从False变True）、support_level_capped = max(swing_component_with_cap(t), baseline_support(t))、swing_component用order=3局部极小值、取最近3个已因果确认的摆动低点里的最高者、baseline_support=max(26周摆动低点,30周均线)、止损阈值=支撑位×97%、5日冻结确认。唯一改动：回看上限从{104,156}周改成{30,40,52}周。窗口=每只股票最后交易日(186只全部为2026-09-08)往前推365日历天，one-position-per-symbol独立模拟。",
+    "results": {
+      "baseline_exact_repro": {"overall": {"n": 1117, "win_rate": 0.4082, "profit_factor": 1.8574, "avg_return_pct": 0.03323}, "price_stop_loss_segment": {"n": 469, "win_rate": 0.3795, "profit_factor": 0.4323, "avg_return_pct": -0.011169, "avg_holding_days": 2.68}},
+      "cap30wk": {"overall": {"n": 1148, "win_rate": 0.4181, "profit_factor": 1.8965, "avg_return_pct": 0.032921}, "price_stop_loss_segment": {"n": 519, "win_rate": 0.4046, "profit_factor": 0.5532, "avg_return_pct": -0.008104, "avg_holding_days": 2.49}, "open_positions_at_window_end": 67},
+      "cap40wk": {"overall": {"n": 1180, "win_rate": 0.4237, "profit_factor": 1.8878, "avg_return_pct": 0.031907}, "price_stop_loss_segment": {"n": 560, "win_rate": 0.4161, "profit_factor": 0.6005, "avg_return_pct": -0.007144, "avg_holding_days": 2.41}, "open_positions_at_window_end": 66, "note": "三档里表现最好：win_rate/PF均为三档最高，样本量(560)也最大，不是靠砍样本量换来的。"},
+      "cap52wk": {"overall": {"n": 1183, "win_rate": 0.4235, "profit_factor": 1.8865, "avg_return_pct": 0.031805}, "price_stop_loss_segment": {"n": 564, "win_rate": 0.4149, "profit_factor": 0.5901, "avg_return_pct": -0.00741, "avg_holding_days": 2.4}, "open_positions_at_window_end": 65, "note": "与strategy_backtest_swing_pivot_lookback_capped_refreshed.json的cap_104wk/cap_156wk几乎逐位相同(n=564完全一致，win_rate/PF四位小数内一致)——说明52周与104/156周在本数据集下实质等价，这两档更长的上限没有实际收紧任何东西。"},
+      "cap40wk_excl_BOXL_FXHO": {"price_stop_loss_segment": {"n": 551, "win_rate": 0.4211, "profit_factor": 0.6268, "avg_return_pct": -0.006336}, "conclusion": "剔除两只已知污染标的后cap40wk改善不但没有消失反而更好(win 41.61%→42.11%，PF 0.6005→0.6268)，确认改善不是这两只标的的污染读数造出来的假象。"},
+      "ranking_pf": "cap40wk(0.6005) > cap52wk(0.5901) > cap30wk(0.5532) > baseline(0.4323)——三档里cap40wk综合表现最好，不是越短越差/越长越好的单调关系。"
+    },
+    "fxho_boxl_contamination_recheck": {
+      "method": "直接抽取strategy_backtest_chande_kroll_and_swing_pivot.json的data_quality_finding_boxl_fxho和strategy_backtest_swing_pivot_lookback_capped_refreshed.json的fxho_boxl_before_after两个字段里列出的全部8个(symbol,date)污染点位，用本次{30,40,52}周三档重新计算support_level_capped，与旧的(无上限)读数逐一对比。",
+      "points": [
+        {"symbol": "FXHO", "date": "2025-09-10", "uncapped": 13550.0, "cap30wk": 7213.0, "cap40wk": 13550.0, "cap52wk": 13550.0, "baseline_support": 7213.0, "resolved_by": "仅cap30wk(回退到baseline)"},
+        {"symbol": "FXHO", "date": "2026-06-04", "uncapped": 4455.0, "cap30wk": 33.79, "cap40wk": 4455.0, "cap52wk": 4455.0, "baseline_support": 33.79, "resolved_by": "仅cap30wk(回退到baseline)"},
+        {"symbol": "FXHO", "date": "2026-07-08", "uncapped": 31.75, "cap30wk": 31.75, "cap40wk": 31.75, "cap52wk": 31.75, "note": "本身已不再异常，三档均不受影响(与原报告一致)"},
+        {"symbol": "FXHO", "date": "2026-07-15", "uncapped": 27.3, "cap30wk": 27.3, "cap40wk": 27.3, "cap52wk": 27.3, "note": "同上"},
+        {"symbol": "BOXL", "date": "2026-02-10", "uncapped": 63.0, "cap30wk": 56.16, "cap40wk": 63.0, "cap52wk": 63.0, "baseline_support": 44.35, "resolved_by": "无——cap30wk只是换成了另一个同样偏高的旧点位(56.16)，仍明显高于baseline(44.35)，不算真正解决"},
+        {"symbol": "BOXL", "date": "2026-04-08", "uncapped": 56.16, "cap30wk": 56.16, "cap40wk": 56.16, "cap52wk": 56.16, "baseline_support": 28.02, "resolved_by": "无——三档全部不变，这个污染点距离触发日不到30周都排不掉"},
+        {"symbol": "BOXL", "date": "2026-07-07", "uncapped": 27.36, "cap30wk": 7.38, "cap40wk": 27.36, "cap52wk": 27.36, "note": "本身已不再异常，但cap30wk下换成了另一个更低点位(7.38)"},
+        {"symbol": "BOXL", "date": "2026-07-13", "uncapped": 7.38, "cap30wk": 7.38, "cap40wk": 7.38, "cap52wk": 7.38, "note": "本身已不再异常，三档均不受影响"}
+      ],
+      "key_finding_negative": "如实报告，不美化：(1) 表现最好的cap40wk和'长上限'性质的cap52wk，对本次抽查的全部4个原始污染点位【一个都没有解决】，读数与无上限版本完全相同。(2) 只有表现较差的cap30wk部分解决了问题，且只解决了FXHO的2个点(回退到baseline)，BOXL的2个点即使缩到30周仍然完全没有解决(2026-02-10读数只是从63.0换成另一个同样偏高的56.16，2026-04-08读数56.16在30周内根本没变化——说明这个具体污染点距离触发日不到30周)。(3) 这证实了上一轮报告的预判：真正排除FXHO/BOXL污染需要的回看上限，比这次任务测试的30-52周区间还要更短，且即使短到30周也无法完全解决BOXL的问题——BOXL的污染点位比FXHO更'贴近'触发日，对回看上限更不敏感。"
+    },
+    "does_shorter_cap_dilute_the_mechanism": "用户担心的'回看上限本身如果比baseline的26-30周窗口短太多，可能会丢失机制本身价值'——实测方向是对的但程度可控：cap30wk(519笔止损段，win 40.46%/PF 0.5532)相比cap40wk(560笔，win 41.61%/PF 0.6005)确实明显更差，说明30周确实开始明显稀释机制价值；但即使是三档里表现最差的cap30wk，也仍然大幅优于baseline(38%/0.4323)，说明'缩短回看上限'本身不会让机制失效，只是收益递减——40周是本次测试范围内收益与'看得更远'价值的较好平衡点，30周已经开始过度牺牲价值但仍有正收益，52周则和不设上限的104/156周实质等价(没有实际收紧)。"
+  },
+
+  "task_b_outlier_filter": {
+    "design": {
+      "chosen_base_cap": "cap40wk(task A最优)",
+      "rationale": "取task A最优的cap40wk作为基础支撑位公式，在此之上加异常值过滤：ratio(t) = swing_component(t) / baseline_support(t)；若ratio超出合理范围，判定swing_component不可信，此时support_level直接退回baseline_support(不再取更高者)。",
+      "candidate_thresholds_tested": {
+        "fixed_2x": "swing_component不超过baseline_support的2倍——采用任务原文建议的'固定合理倍数'方案，理由：(1)简单、可解释性强，不依赖对'全市场分布'本身的信任(而这个分布本身可能已经被少数污染标的扭曲)；(2)实测false-positive代价明显更小(见下)。",
+        "pctl_p99": "全市场(cap40wk、1年回测窗口内、剔除已知FXHO/BOXL避免用污染数据定义阈值)该比值分布的p99=1.4723——采用任务原文的另一个建议方案作对照。分布全貌：p50=0.984, p90=1.131, p95=1.214, p99=1.472, p99.5=1.563, p99.9=9.857(BMNR，见下)、p100(剔除FXHO/BOXL)=9.857。"
+      },
+      "why_not_purely_percentile": "计算发现全市场比值分布里，合法、非污染标的的正常波动本身就能达到1.4-2.5倍(如DOCS最高2.455倍、CRWV 2.279倍、STUB 2.097倍、MSTR 1.624倍、NOW 1.596倍、DELL 1.593倍、TEAM/WDAY 1.569倍——人工抽查DOCS/CRWV的原始周线价格历史，走势平滑、无任何'历史价格突然缩水几个数量级'的未复权特征，判断是真实的高波动股票而非数据污染)，这意味着任何试图'用比值单独区分BOXL式污染(比值1.42-2.0)与合法高波动股票(比值最高2.46)'的过滤器，在数值上根本无法做到完美切割——这是如实报告的一个结构性限制，不是阈值没调好。"
+    },
+    "results_price_stop_loss_segment": {
+      "cap40wk_no_filter_baseline_for_comparison": {"n": 560, "win_rate": 0.4161, "profit_factor": 0.6005, "avg_return_pct": -0.007144},
+      "fixed_2x": {"n": 560, "win_rate": 0.4161, "profit_factor": 0.6005, "avg_return_pct": -0.007144, "note": "与不加过滤完全一致(逐位相同)——2倍阈值在本次186只股票/1年窗口的实际交易样本里，没有改变任何一笔交易的触发结果(见下方逐点核实：它确实改变了计算出的support_level数值，但改变后的数值仍然远低于当时的真实股价，止损照样会触发，只是触发的'理由数字'从荒谬变得合理，不影响这笔交易本身是否发生/何时发生)。"},
+      "pctl_p99": {"n": 550, "win_rate": 0.4127, "profit_factor": 0.5991, "avg_return_pct": -0.007148, "note": "比不加过滤和2x都略差(win 41.61%→41.27%，PF 0.6005→0.5991)——p99阈值虽然多解决了1个污染点位(见下)，但代价是波及更多合法高波动股票的支撑位判断，净效果是轻微负面。"}
+    },
+    "false_positive_check_in_window": {
+      "method": "把两档阈值应用到cap40wk的186只股票×1年回测窗口内全部有效swing_component的(symbol,date)点(共46,242个)，统计实际被判定为异常值(因而回退到baseline)的点位。",
+      "fixed_2x": {"n_flagged": 234, "pct_of_all_points": 0.0051, "n_symbols_touched": 6, "symbols": {"FXHO": 77, "BMNR": 74, "BOXL": 37, "DOCS": 33, "CRWV": 10, "STUB": 3}},
+      "pctl_p99": {"n_flagged": 647, "pct_of_all_points": 0.014, "n_symbols_touched": 21, "top_symbols": {"FXHO": 144, "BMNR": 89, "BOXL": 75, "DOCS": 72, "WDAY": 43, "STUB": 27, "GENI": 25, "CRCL": 24, "NOW": 23, "SOLS": 20, "DJT": 19, "AAOI": 18, "MSTR": 14, "TEAM": 14, "CRWV": 10}},
+      "conclusion": "如实报告确实存在误伤：p99阈值触及21只股票，其中WDAY(43个点位)、TEAM(14个)、NOW(23个)、MSTR(14个)等都是知名、无已知数据质量问题的正常成长股，被误判为'异常'的天数不算少；fixed_2x只触及6只，误伤集中在DOCS(33个)/CRWV(10个)/STUB(3个)，规模小得多。BMNR(两档都被大量触及，89/74个点位)人工核查其原始周线价格历史后判断不是FXHO式的未复权拆股伪影(价格从7.5→4.6→134.96→40.6一周内剧烈跳动，但没有FXHO那种'数百万到数千平滑衰减数年'的特征，更像真实的投机性暴涨——BMNR大概率是一只真实高波动的加密货币关联股，不是第三个数据bug，但不能100%排除，如实标注为未确认的观察，不下定论。"
+    },
+    "fxho_boxl_resolution_recheck": {
+      "method": "在cap40wk基础上核实此前4个已知污染点位这次是否真的被过滤掉。",
+      "points": [
+        {"symbol": "FXHO", "date": "2025-09-10", "swing_component": 13550.0, "baseline": 7213.0, "ratio": 1.878, "fixed_2x_result": "未过滤(1.878<2.0，仍是13550)", "pctl_p99_result": "过滤(1.878>1.4723，回退到7213)"},
+        {"symbol": "FXHO", "date": "2026-06-04", "swing_component": 4455.0, "baseline": 33.79, "ratio": 131.9, "fixed_2x_result": "过滤(回退到33.79)", "pctl_p99_result": "过滤(回退到33.79)"},
+        {"symbol": "BOXL", "date": "2026-02-10", "swing_component": 63.0, "baseline": 44.35, "ratio": 1.42, "fixed_2x_result": "未过滤(1.42<2.0，仍是63.0)", "pctl_p99_result": "未过滤(1.42<1.4723，仍是63.0)"},
+        {"symbol": "BOXL", "date": "2026-04-08", "swing_component": 56.16, "baseline": 28.02, "ratio": 2.004, "fixed_2x_result": "过滤(回退到28.02)", "pctl_p99_result": "过滤(回退到28.02)"}
+      ],
+      "summary": "fixed_2x解决2/4(FXHO 06-04、BOXL 04-08)，未解决2/4(FXHO 09-10——比值1.878没有超过2倍这条线；BOXL 02-10——比值1.42，落在合法高波动股票的正常区间内，无法用比值区分)。pctl_p99解决3/4(多解决了FXHO 09-10)，但代价是上面统计的更大范围误伤。BOXL 2026-02-10在两档阈值下都无法解决——这一点的比值(1.42)本身就在正常股票的分布区间内(DOCS/CRWV等合法股票的比值上限达2.28-2.46)，不存在一个既能捕获它、又不误伤合法股票的阈值，这是结构性限制，不是调参能解决的。"
+    },
+    "recommendation_for_task_b": "选用fixed_2x(不超过baseline的2倍)作为推荐设计：误伤范围小(6只股票、234个点位，且都是可解释的高波动成长股)，且完整保留了cap40wk本身带来的止损段改善(win_rate/PF与不加过滤完全一致)。pctl_p99虽然多解决1个污染点位，但净效果是轻微拖累整体表现(PF从0.6005降到0.5991)且误伤面明显更大，不推荐。无论选哪档阈值，BOXL 2026-02-10这个点位都无法被解决——如实说明这不是过滤器设计不够精细，而是这个污染读数(1.42倍)本身在数值上和合法高波动股票（DOCS等最高达2.46倍）无法区分，异常值过滤这条防线对这一类'幅度不算离谱、只是恰好由未复权拆股造成'的污染是有结构性盲区的。"
+  },
+
+  "task_c_portfolio_level_simulation": {
+    "assumption_check_vs_adx_round": {
+      "requirement": "用户要求先验证strategy_backtest_adx_portfolio_level_pacing_test.json的baseline_no_adx_filter结果能否直接复用，assumptions不一致就必须独立重跑。",
+      "checked_items": {
+        "window_dates": "ADX那次: 2025-09-08~2026-09-08(252交易日)；本次独立构建: 2025-09-08~2026-09-08(252交易日)——完全一致。",
+        "universe": "两次均为strategy_backtest_entry_exit.json的186只股票去重集合——一致。",
+        "risk_rules_params": "starting_capital_usd=2192.82、max_new_positions_per_day=3、max_concurrent_positions=10、medium=0.12——两次直接从risk_rules.json读取，数值一致(risk_rules.json自ADX那次以来未再改动这几个字段)。",
+        "underlying_data_snapshot": "不一致——ADX那次用的OHLCV缓存文件名后缀是'-2026-09-09.csv'(构建于系统日期2026-09-08当天，end_str=today+1)，本次运行时系统日期已变成2026-09-09，load_ohlcv()据此指向后缀'-2026-09-10.csv'的缓存文件(同一批2026-09-08收盘数据，但是不同时间点独立下载/写入的缓存文件，不保证逐字节相同——yfinance的auto_adjust=True复权重算可能随时间产生微小漂移)。"
+      },
+      "decision": "由于底层数据快照不保证完全一致(哪怕日期范围/参数配置全部相同)，按用户指示不强行套用ADX那次的baseline_no_adx_filter结果，本次在同一脚本/同一次运行内独立重跑baseline，与摆动支撑位方案在完全相同的数据快照下并排比较，从根本上排除跨快照不可比的风险。",
+      "actual_discrepancy_confirming_the_decision_was_correct": "独立重跑的baseline结果与ADX那次的baseline_no_adx_filter确实存在真实差异(不只是理论上的担心)：本次total_trades=87 vs ADX那次94笔；price_stop_loss段n=26 vs 34笔，win_rate 26.92% vs 29.41%；total_return_pct=86.26% vs 80.45%。差异幅度不小，证实了'不能直接复用'的判断是对的，若强行套用会造成对照组本身就不可比的问题。"
+    },
+    "methodology_note": "完全对齐strategy_backtest_adx_portfolio_level_pacing_test.json的方法论，只替换止损支撑位公式这一处，其余规则逐条照搬：(1)186只股票共享同一份资金池，starting_capital_usd=2192.82直接从risk_rules.json读取；(2)统一按medium档(12%)处理所有entry买入的仓位大小，每天在处理完当天所有EXIT之后、开始ENTRY之前，用cash+持仓市值算一次equity快照，当天所有新开仓候选统一用这个size——同ADX那次的简化假设，在此明确声明；(3)execution_pacing.max_new_positions_per_day=3当日新开仓上限，超出当日额度的候选按字母序(因为没有Phase A的conviction/technical/calibration数据，排序规则的前三项全部打平，完全退化为纯字母序，与ADX那次相同的简化)顺延到下一交易日重新排队，不重新验证信号是否仍然有效；(4)account.max_concurrent_positions=10并发持仓数上限；(5)exit信号/price_stop_loss不受资金约束随时可以卖，且EXIT先于ENTRY处理，同一天卖出释放的现金/持仓额度当天就能被后续候选使用；(6)新增的现金可用性闸门(cash_shortfall)——'共享资金池'这个要求本身逻辑上必然导致的约束，同ADX那次的处理方式。两组模拟(baseline vs swing_pivot_cap40wk+2x异常值过滤)使用完全相同的引擎代码、完全相同的shared calendar，只有止损支撑位公式一处不同。",
+    "results": {
+      "baseline": {
+        "window": "2025-09-08 ~ 2026-09-08 (252交易日)",
+        "total_trades": 87,
+        "overall": {"n": 87, "win_rate": 0.3563, "profit_factor_pct_based": 2.4141, "profit_factor_dollar_based": 2.1748, "avg_return_pct": 0.050523},
+        "price_stop_loss_segment": {"n": 26, "wins": 7, "losses": 19, "win_rate": 0.2692, "profit_factor_pct_based": 0.2157, "profit_factor_dollar_based": 0.1747, "avg_return_pct": -0.014679},
+        "exit_signal_segment": {"n": 61, "win_rate": 0.3934, "profit_factor_pct_based": 2.8223, "avg_return_pct": 0.078314},
+        "final_cash": 79.8, "final_positions_mtm_value": 4004.65, "final_equity": 4084.45,
+        "total_return_pct": 0.8626,
+        "open_positions_at_window_end_count": 7,
+        "capital_utilization": {"pct_trading_days_zero_open_positions": 0.0, "avg_cash_fraction_of_equity": 0.0734, "median_cash_fraction_of_equity": 0.0788, "avg_concurrent_positions": 6.921, "median_concurrent_positions": 7.0, "max_concurrent_positions_ever_reached": 8, "cap_from_risk_rules": 10},
+        "deferred_queue": {"total_distinct_candidates_created": 186, "ever_deferred_at_least_once": 186, "never_deferred_filled_immediately": 9, "by_first_defer_reason": {"daily_cap": 32, "concurrent_cap": 0, "cash_shortfall": 154}, "eventually_filled": 31, "never_filled_by_window_end": 155, "effectively_missed_gt_30_trading_days": 155, "candidate_days_blocked_by_reason_across_full_year": {"daily_cap": 64, "concurrent_cap": 0, "cash_shortfall": 39878}}
+      },
+      "swing_pivot_cap40wk_2xfilter": {
+        "window": "2025-09-08 ~ 2026-09-08 (252交易日，与baseline逐日相同)",
+        "total_trades": 98,
+        "overall": {"n": 98, "win_rate": 0.3776, "profit_factor_pct_based": 2.3286, "profit_factor_dollar_based": 2.0537, "avg_return_pct": 0.045257},
+        "price_stop_loss_segment": {"n": 37, "wins": 15, "losses": 22, "win_rate": 0.4054, "profit_factor_pct_based": 0.6, "profit_factor_dollar_based": 0.5934, "avg_return_pct": -0.007238},
+        "exit_signal_segment": {"n": 61, "win_rate": 0.3607, "profit_factor_pct_based": 2.7623, "avg_return_pct": 0.077098},
+        "final_cash": 20.26, "final_positions_mtm_value": 4118.65, "final_equity": 4138.92,
+        "total_return_pct": 0.8875,
+        "open_positions_at_window_end_count": 7,
+        "capital_utilization": {"pct_trading_days_zero_open_positions": 0.0, "avg_cash_fraction_of_equity": 0.0746, "median_cash_fraction_of_equity": 0.081, "avg_concurrent_positions": 6.925, "median_concurrent_positions": 7.0, "max_concurrent_positions_ever_reached": 8, "cap_from_risk_rules": 10},
+        "deferred_queue": {"total_distinct_candidates_created": 186, "ever_deferred_at_least_once": 186, "never_deferred_filled_immediately": 9, "by_first_defer_reason": {"daily_cap": 32, "concurrent_cap": 0, "cash_shortfall": 154}, "eventually_filled": 31, "never_filled_by_window_end": 155, "effectively_missed_gt_30_trading_days": 155, "candidate_days_blocked_by_reason_across_full_year": {"daily_cap": 64, "concurrent_cap": 0, "cash_shortfall": 39817}}
+      }
+    },
+    "interpretation": "与ADX那次(per-symbol正面改善在组合级约束下反转，止损段win_rate 44.53%→18.52%)不同，本次摆动支撑位机制的止损段改善在组合级约束下【没有反转，反而在相对幅度上更强】：baseline组合级止损段win_rate=26.92%，swing_pivot组合级止损段win_rate=40.54%，提升+13.62个百分点；PF从0.2157提升到0.6000(+0.384)。作为对照，per-symbol独立测试(task A)的同一cap40wk配置止损段改善是win_rate 37.95%→41.61%(+3.66pp)、PF 0.4323→0.6005(+0.168)——组合级约束下的相对提升幅度(百分点)比per-symbol独立测试更大，不是更小或反转。必须强调的局限：(1) 组合级止损段样本量(baseline 26笔、swing_pivot 37笔)远小于per-symbol独立测试(469笔/560笔)，也远小于baseline组合级本身相对per-symbol baseline的样本量(469→26，因为execution_pacing/现金约束把可交易样本大幅压缩)，噪声成分可能不小，与ADX那次报告强调的注意事项一致；(2) 组合级baseline本身的止损段表现(26.92%)也明显低于per-symbol的baseline(37.95%)，说明组合级约束改变的不只是swing_pivot机制的效果，连baseline自己的样本分布也变了，两个'baseline'构成上不完全可比，这不是本次新引入的问题(ADX那次也报告过同样的现象)。总收益率：swing_pivot组合级88.75% vs baseline组合级86.26%，+2.49个百分点——比止损段的改善幅度小得多，因为止损段只占总交易的一小部分(37/98≈38%)，且和ADX那次一样，候选排队顺序在没有Phase A论点数据时完全退化为纯字母序，'谁抢到了稀缺的每日3个名额'带有相当随机性，这个总收益差异的可信度同样打折扣，不宜单独作为采纳理由。资金利用率：两组几乎相同(avg_concurrent 6.921 vs 6.925，max_concurrent_ever都是8，未触及max_concurrent_positions=10上限)，deferred_queue的绝大部分结构性统计(total_distinct_candidates=186、ever_deferred=186、eventually_filled=31、never_filled=155、effectively_missed=155)两组完全一致——这是因为两组在模拟前期(账户从零持仓起步、现金最紧张的头几十个交易日)入场路径完全相同(entry_rise与止损公式无关)，队列的'大部分候选被现金卡住而非daily_cap卡住、且一旦被deferred大概率永久错过'这个结构性现象与ADX那次报告的发现完全一致(candidate_days_blocked中cash_shortfall远超daily_cap，daily_cap只在最初几天真正起作用)；两组唯一的量化差异出现在candidate_days_blocked_by_reason的cash_shortfall计数(39878 vs 39817)，来自两组从中期开始因止损公式不同而产生的持仓/现金路径分叉。"
+  },
+
+  "verification": {
+    "task_a_b_hand_recompute_5_points": {
+      "method": "对task A/B最终确定的最优配置(cap40wk + fixed_2x异常值过滤)，抽5个(symbol,date)点位，用与向量化管道完全独立的第二套代码路径(手动W-FRI周线resample、手动扫描局部极小值、手动应用'p+order<当前周rank 且 当前周rank-p<=40周'因果+回看上限过滤、手动算26周低点/30周均线、手动算ratio并应用2倍异常值判定)独立复算support_level_capped和异常值过滤后的最终support_level_filtered，容差0.02。",
+      "samples": [
+        {"symbol": "AAPL", "date": "2026-06-15", "pipeline_filtered": 272.4971, "hand_filtered": 272.4971, "flagged": false, "match": true},
+        {"symbol": "NVDA", "date": "2026-03-02", "pipeline_filtered": 182.9258, "hand_filtered": 182.9258, "flagged": false, "match": true},
+        {"symbol": "FXHO", "date": "2026-06-04", "pipeline_filtered": 33.7887, "hand_filtered": 33.7887, "flagged": true, "swing_component_before_filter": 4455.0, "match": true},
+        {"symbol": "BOXL", "date": "2026-04-08", "pipeline_filtered": 28.0224, "hand_filtered": 28.0224, "flagged": true, "swing_component_before_filter": 56.16, "match": true},
+        {"symbol": "WDAY", "date": "2026-05-08", "pipeline_filtered": 233.18, "hand_filtered": 233.18, "flagged": false, "swing_component": 233.18, "match": true}
+      ],
+      "result": "5/5全部完全一致(误差=0)，覆盖正常股票(AAPL/NVDA/WDAY)与已知污染标的的具体过滤前/过滤后数值(FXHO/BOXL)，确认向量化实现无误。"
+    },
+    "task_c_portfolio_5_real_trade_timelines": {
+      "method": "抽5个真实交易案例，覆盖'组合级约束导致的顺延'和'止损公式换了导致离场时点不同'两类，手工画时间线核对。",
+      "samples": [
+        {
+          "case": "daily_cap顺延(两组完全相同，因为entry信号与止损公式无关)",
+          "symbol": "CRM",
+          "timeline": "2025-09-08(窗口第1个交易日)当天entry_rise触发的候选池(字母序)=[AXTA,BTSG,CRCT,CRM,ESI,HTFL,INSM,ONDS,PNFP,SHW,WAY,WLK,YELP]共13个，与strategy_backtest_adx_portfolio_level_pacing_test.json verification.samples里记录的baseline day1候选池完全一致(交叉验证了本次entry信号生成与ADX那次是同一套逻辑，无偏差)。daily_cap=3，字母序前3(AXTA,BTSG,CRCT)成交，CRM排第4被deferred(daily_cap)。2025-09-09候选池=[CRM结转]+16个新触发，CRM字母序仍在前3(ALAB,CDNS,CRM)，当天成交。",
+          "verified": "两组(baseline/swing_pivot)在这个案例上完全相同，因为CRM在2025-09-09就已成交平仓，尚未进入两组止损公式产生分歧的阶段。"
+        },
+        {
+          "case": "止损公式换了导致离场时点不同(1)",
+          "symbol": "ALNY",
+          "timeline": "同一entry_date下，baseline组用现有26周低点/30周均线支撑位一路持有到2026-01-13才被exit_signal(空头三线共振)平仓，return=-8.97%；swing_pivot组用cap40wk+2x过滤的支撑位在更早的2026-01-07就被price_stop_loss触发平仓，return=+3.96%。",
+          "verified": "手工核对2026-01-07当天ALNY收盘价确实低于swing_pivot支撑位×97%阈值且连续5日满足冻结确认，而同一天用baseline公式算出的阈值当天尚未连续5日满足——两个公式对同一段下跌走势的'提前程度'不同，这次提前止损避免了后续继续下跌到01-13的额外损失，是机制设计意图内的正面案例。"
+        },
+        {
+          "case": "止损公式换了导致离场时点不同(2)",
+          "symbol": "AAOI",
+          "timeline": "同一entry_date下，baseline组price_stop_loss触发于2026-08-28(return=-18.33%)，swing_pivot组price_stop_loss提前4个交易日触发于2026-08-24(return=-17.26%)。",
+          "verified": "两组都是price_stop_loss退出(不是retrigger到不同的exit_reason)，纯粹是支撑位数值不同导致冻结阈值被触发的时点不同，提前4天的效果是把损失从-18.33%收窄到-17.26%，方向正面但幅度不大——如实报告，不是每笔都像ALNY那样有戏剧性改善。"
+        },
+        {
+          "case": "止损公式换了导致离场时点不同(3，止损段提前反而好于等到exit_signal)",
+          "symbol": "ADP",
+          "timeline": "同一entry_date下，baseline组一路持有到2026-06-25被exit_signal平仓，return=+0.80%；swing_pivot组在2026-06-23就被price_stop_loss提前触发，return=+2.75%。",
+          "verified": "这是一个price_stop_loss提前触发反而'跑赢'继续持有到exit_signal的案例(swing_pivot的止损阈值更高，在价格阶段性回调时提前锁定了当时更高的价位，而baseline继续持有到exit_signal时价格已经从高点回落)——提前止损不总是意味着'牺牲更大盈利换更高胜率'，有时反而是更好的择时，与前几轮报告里'提前触发不是单向正面'的结论并不矛盾(只是这个具体案例恰好是正面的)。"
+        },
+        {
+          "case": "组合级资金约束导致的入场时点顺延(由止损公式差异在其他标的上产生的现金路径分叉间接引起)",
+          "symbol": "ADBE",
+          "timeline": "ADBE在两组模拟里的前8笔交易(entry/exit日期、exit_reason、return_pct)完全逐笔相同，从2025-10-01到2026-06-22——因为到这个时点为止两组尚未在其他标的上产生足以影响ADBE当天现金可用性的路径分叉。第9笔开始分叉：baseline组ADBE在2026-07-16入场(前一天07-15现金余额477.06，当天现金骤降到3.68，说明07-15没有买ADBE而是留出现金给了当天优先级更高/更早触发的其他候选，07-16才轮到ADBE成交)；swing_pivot组ADBE在2026-07-15就入场(当天现金从328.75降到22.84，说明当天现金刚好够买)。",
+          "verified": "直接核对两组当天(07-13~07-17)的daily_stats现金/持仓数快照：swing_pivot组在07-15当天现金充裕度略高于baseline组(两组在此之前的几个月里，不同标的因止损公式不同而在不同日期平仓释放/占用现金，累积到7月中旬产生了几十美元级别的现金水位差)，这个差异恰好让swing_pivot组多出的现金够在07-15当天买入ADBE，而baseline组要等到07-16现金进一步释放才够——这是一个真实的、由止损公式改变在组合级资金池层面产生的'蝴蝶效应'式顺延案例，不是bug：两组entry_rise信号本身在07-15/07-16两天完全相同(entry_rise与止损公式无关)，纯粹是资金可用性时点不同导致的成交日差异，与ADX那次报告里对daily_cap/cash_shortfall顺延机制的核实方法一致，只是这次的触发源头是止损公式差异而非ADX过滤。"
+        }
+      ],
+      "result": "5个案例全部手工核对通过：entry信号生成逻辑两组完全一致（已与ADX round的day1候选池交叉验证)，止损公式差异导致的离场时点/收益差异均可追溯到具体的冻结阈值比较，组合级资金路径分叉导致的入场时点顺延也在daily_stats现金快照上得到独立确认，没有发现bug。"
+    }
+  },
+
+  "comparison_table": [
+    {"variant": "baseline(cap0,精确复现)", "scope": "per-symbol独立", "stop_n": 469, "stop_win_rate": 0.3795, "stop_pf": 0.4323},
+    {"variant": "cap30wk", "scope": "per-symbol独立", "stop_n": 519, "stop_win_rate": 0.4046, "stop_pf": 0.5532},
+    {"variant": "cap40wk(task A最优)", "scope": "per-symbol独立", "stop_n": 560, "stop_win_rate": 0.4161, "stop_pf": 0.6005},
+    {"variant": "cap52wk(≈原104/156周)", "scope": "per-symbol独立", "stop_n": 564, "stop_win_rate": 0.4149, "stop_pf": 0.5901},
+    {"variant": "cap40wk + fixed_2x异常值过滤(task B最优)", "scope": "per-symbol独立", "stop_n": 560, "stop_win_rate": 0.4161, "stop_pf": 0.6005, "note": "与不加过滤完全相同"},
+    {"variant": "cap40wk + pctl_p99异常值过滤", "scope": "per-symbol独立", "stop_n": 550, "stop_win_rate": 0.4127, "stop_pf": 0.5991},
+    {"variant": "baseline(组合级,独立重跑)", "scope": "组合级/portfolio", "stop_n": 26, "stop_win_rate": 0.2692, "stop_pf": 0.2157, "total_return_pct": 0.8626},
+    {"variant": "cap40wk+fixed_2x(组合级,task C最终配置)", "scope": "组合级/portfolio", "stop_n": 37, "stop_win_rate": 0.4054, "stop_pf": 0.6, "total_return_pct": 0.8875}
+  ],
+
+  "key_finding": "任务A：三档更短回看上限里cap40wk表现最好(止损段win_rate 41.61%/PF 0.6005)，不是越短越差的单调关系(cap30wk反而更差，cap52wk与原104/156周实质等价)。但如实报告一个不利发现：即使是表现最好的cap40wk(以及52wk)，对上一轮点名的4个FXHO/BOXL污染点位【一个都没有解决】——只有表现较差的cap30wk部分解决了(仅FXHO的2个点，BOXL的2个点即使30周也解决不了)。这证实了上一轮的预判：真正排除这些污染需要的回看上限比这次测试的30-52周区间更短，且BOXL的污染比FXHO更贴近触发日、对回看上限更不敏感。缩短回看上限确实会稀释机制的改善幅度(cap30wk明显不如cap40/52wk)，但即便是三档里最差的cap30wk仍远好于baseline，机制没有'失效'，只是收益递减。\n任务B：设计了'swing_component不超过baseline_support的2倍'的固定倍数异常值过滤，选用理由是False Positive代价明显小于百分位数方案(仅触及6只股票234个点位 vs 21只股票647个点位)，且完整保留了cap40wk本身的改善(过滤前后止损段win_rate/PF完全一致)。但如实报告：该过滤器只解决了4个已知污染点位中的2个(FXHO 2026-06-04、BOXL 2026-04-08)，FXHO 2025-09-10(比值1.878，卡在2倍线以下)和BOXL 2026-02-10(比值1.42)都没有被解决——尤其BOXL 2026-02-10这个点位的比值(1.42)本身落在合法高波动股票(DOCS最高2.46倍、CRWV 2.28倍等，人工核查其原始价格走势排除了数据污染)的正常分布区间内，不存在一个既能捕获它又不误伤合法股票的阈值——这是结构性限制，不是参数没调好。额外发现一个未确认的第三候选污染标的BMNR(两档阈值都大量触及)，人工核查其价格走势判断更像真实的投机性暴涨而非未复权拆股伪影，但不能100%排除，如实标注为未确认观察。\n任务C(本次最重要的新增)：与ADX那次(per-symbol正面改善在组合级约束下反转)不同，本次摆动支撑位机制的止损段改善在186只股票共享资金/execution_pacing/max_concurrent_positions的组合级约束下【没有反转，相对提升幅度反而更大】：组合级止损段win_rate从baseline的26.92%提升到swing_pivot方案的40.54%(+13.62pp)，PF从0.2157提升到0.6000。组合级总收益率：swing_pivot方案88.75% vs baseline 86.26%(+2.49pp)，但这个总收益差异的可信度和ADX那次一样打折扣，因为候选排队顺序在缺少Phase A论点数据时完全退化为纯字母序，'谁抢到稀缺名额'带有随机性。必须强调三点局限：(1)组合级止损段样本量(26/37笔)远小于per-symbol独立测试(469/560笔)，噪声成分不可忽视；(2)组合级baseline本身的止损段表现(26.92%)也明显低于per-symbol baseline(37.95%)，两个'baseline'构成不完全可比，这是execution_pacing/现金约束大幅压缩可交易样本的结果，不是本次新问题；(3)资金利用率/deferred队列结构在两组间几乎没有差异(max_concurrent_positions=10全程未被触及)，说明本次组合级检验的主要区分因子确实是止损公式本身，不是资金节奏的副作用。事先按用户要求验证了ADX那次baseline_no_adx_filter的可复用性——窗口日期/risk_rules参数完全一致，但底层OHLCV缓存快照不同(不同时间点独立下载)，独立重跑后发现两次baseline结果确有实质差异(87 vs 94笔交易)，证实了'不能强行套用'的判断是对的，已按要求独立重跑。",
+
+  "recommendation": "任务A+B：暂不建议把'cap40wk + fixed_2x异常值过滤'直接写入risk_rules.json替换现有支撑位公式，尽管这次的per-symbol和组合级测试都显示止损段有真实、非样本塌缩的改善(甚至组合级下改善幅度更大)，核心保留意见是：本轮两个新机制(缩短回看上限、异常值过滤)当初设计的直接目的——彻底解决FXHO/BOXL式数据污染——都没有达成(FXHO/BOXL各有至少1-2个已知污染点位在最优配置下依然存在)，如果现在采纳，等于是在明知'防护措施对目标问题效果有限'的情况下依然上线，应该更谨慎。\n如果确实要推进，建议的具体路径：(1) 把'swing_component不超过baseline_support的2倍'的异常值过滤作为兜底防护写入(哪怕不能完全解决FXHO/BOXL，至少能防止最极端的污染读数(如FXHO的131倍)被取更高者放大成荒谬数字，这本身是有价值的安全网，即使不影响本次测试样本里的交易结果，未来遇到更极端的污染案例时会有防护作用)；(2) 支撑位公式本身建议采用cap40wk(40周回看上限，实测三档里综合表现最好);(3) 在正式采纳前，应该像上一轮建议的那样，先对FXHO/BOXL(以及本次新发现的疑似案例BMNR)做一次专门的数据源核实(比如直接对比另一个行情源如东财/雪球的历史价格，确认是否真的是未复权拆股问题，而不是继续在yfinance数据上打补丁)，从数据源头解决比在支撑位公式层面加越来越多的防护措施更根本；(4) 鉴于组合级测试的止损段样本量仍然偏薄(26/37笔)，建议在有更多年份数据或者更大股票池后重新做一次组合级验证，进一步确认这次的正面结果不是单次窗口/单次候选路径的偶然。\n本次最重要的结论价值在于：这是继ADX之后第二次做组合级总收益检验，这次的结果没有出现ADX那次的'组合级反转'现象——这本身是一个值得记录的正面信号(机制的改善看起来对组合级约束是稳健的)，但考虑到FXHO/BOXL污染问题本身仍未解决、且样本量偏薄，建议的姿态是'继续观察、暂不上线'，而不是'这次组合级测试通过了就可以采纳'。在此之前，risk_rules.json的现有支撑位公式(26周低点/30周均线取更高者)应保持不变。"
+}

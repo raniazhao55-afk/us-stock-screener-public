@@ -1,0 +1,123 @@
+{
+  "built_date": "2026-09-09",
+  "purpose": "第四轮摆动支撑位补测，聚焦FXHO/BOXL数据污染问题能否被两个新措施解决：(1) 摆动低点识别新增'成交量=0的周不能进候选池'规则，叠加在上一轮最优配置(cap40wk回看上限+fixed_2x异常值过滤)之上；(2) 独立核实lib/stockstats_utils.py新加的_cache_stale_relative_to_new_splits()缓存防护这次是否真的观察到生效。任务发起前已在本会话内查明两个新事实：FXHO在2021-04-13~2024-08-27间有781个交易日(本次5年下载窗口内为693个)成交量=0且价格是几百万到几千万美元/股(真实交易开始前的影子占位数据)；FXHO在2024-09~2026-06间做过5次真实缩股(累计约125万比1)，BOXL同期做过4次(累计约1440比1)，yfinance的auto_adjust=True会把已知缩股全部追溯应用到整条历史，导致'同一天该显示多少钱'随下载时间点变化。任务开始前已手动删除.cache目录下全部FXHO/BOXL缓存文件，确保本次是全新、内部一致的下载。",
+
+  "environment_and_engine_note": "代码不在us-stock-screener目录本身；复用~/.claude/skills/us-stock-data的lib/technical_signals._prepared_df()提供entry_state/exit_state原始生产逻辑。为保证'全程用同一次下载贯穿整个任务、不因运行耗时长而中途重新下载导致内部不一致'，本轮没有依赖lib.stockstats_utils.load_ohlcv()自身的磁盘缓存/TTL机制作为分析数据源，而是先用freeze_snapshot.py对186只股票各调用一次load_ohlcv()（FXHO/BOXL因缓存已被清空，这一次调用是真正的全新yf.download()网络请求；其余184只复用当时仍新鲜的磁盘缓存），把结果原样pickle成一份frozen_ohlcv.pkl快照（CRCL/DDOG首次请求遇到yfinance瞬时'possibly delisted'报错，重试后成功，186/186全部到位），此后本次任务里的回测引擎、186只股票逐点复核、手算验证全部只读这一份快照，不再触碰网络或磁盘缓存TTL逻辑。lib.technical_signals.load_ohlcv被monkeypatch指向这份冻结快照，_prepared_df()内部的指标计算逻辑本身未改动。核心引擎(causal周度支撑位重建、swing pivot局部极小值检测、cap40wk回看上限、fixed_2x异常值过滤、新增的成交量=0周排除规则)新写在scratchpad(/private/tmp/.../scratchpad/swingcap_zv/{core_zv.py,run_main.py,hand_verify.py,test_cache_guard.py,freeze_snapshot.py})，按仓库惯例只commit这一个JSON结果文件。",
+
+  "fresh_download_confirmation": {
+    "method": "freeze_snapshot.py对FXHO/BOXL的load_ohlcv()调用发生在.cache目录里两者缓存文件均已被删除的状态下，因此是真正的yf.download(auto_adjust=True)全新网络请求，不是缓存读取。",
+    "fxho": {"n_rows": 1254, "date_range": "2021-09-09 ~ 2026-09-08", "last_close": 12.39},
+    "boxl": {"n_rows": 1254, "date_range": "2021-09-09 ~ 2026-09-08", "last_close": 5.88},
+    "fxho_zero_volume_days_in_this_5yr_window": {"count": 693, "date_range": "2021-09-09 ~ 2024-08-27", "close_range_on_those_days": "231,250 ~ 7,750,000美元/股", "note": "781天是用户在本任务发起前的调查里用户自己更长历史窗口下数出的数字；本次load_ohlcv()固定回看5年(今天往前推5年)，2021-04-13~2021-09-08这段落在5年窗口之外，故本次能看到的零成交量天数是693天，属于同一段问题区间的子集，不是数字矛盾。"},
+    "boxl_zero_volume_days_in_this_5yr_window": {"count": 0, "note": "与用户此前调查一致(BOXL已知的44天零成交量都在2018年初，落在本次5年窗口之外)——本次全新下载确认BOXL在可见窗口内完全没有零成交量交易日，这条新规则从一开始就不可能对BOXL产生任何作用。"},
+    "raw_close_price_report_2025_09_10_asked_by_user": "本次全新、独立下载得到的FXHO 2025-09-10收盘价 = 6600.0(Volume=60，非零成交量)——与用户在任务发起前对硬盘上4份不同时间建的旧缓存文件的观察(全部一致显示6600)完全吻合，如实报告这次也是6600，不是13550，也不是别的数字。但这不代表'污染已解决'：见下方task2，6600只是这一天的收盘价，导致污染的是同一时期(2024-11~2025-09)另一周(2024-12-20或2025-01-31，同为13550)的历史收盘价被swing pivot机制选中当作'摆动低点'，而这个13550本身也是全新下载得到的、当前会一直复现的数字，不是旧缓存的残留读数。"
+  },
+
+  "engine_validation": {
+    "true_baseline_pure_support_reproduction": "用本次引擎(读同一份冻结快照)独立复现strategy_backtest_swing_pivot_lookback_capped_refreshed.json的precondition基线(纯baseline_support，26周低点/30周均线取更高者，不含任何swing pivot分量)：overall n=1117(完全一致)/win_rate=0.4082(完全一致)/profit_factor=1.8574(完全一致)；price_stop_loss_segment n=469(完全一致)/win_rate=0.3795(完全一致)/profit_factor=0.4323(完全一致)。确认引擎在全新独立下载的数据快照下依然与此前三轮完全一致。",
+    "cap40wk_fixed2x_reproduction": "在上一轮strategy_backtest_swing_pivot_shortcap_outlierfilter_portfolio.json确定的最优配置(cap40wk回看上限+fixed_2x异常值过滤，不含本轮新规则)上独立重跑：price_stop_loss_segment n=560(完全一致)/win_rate=0.4161(完全一致)/profit_factor=0.6005(完全一致)——与上一轮task_b.results_price_stop_loss_segment.fixed_2x逐位相同。false-positive核查(46,242个1年窗口内有效swing_component点位)也精确复现：234个点位被2x阈值标记，涉及6只股票且计数逐一相同(FXHO 77/BMNR 74/BOXL 37/DOCS 33/CRWV 10/STUB 3)，与上一轮false_positive_check_in_window.fixed_2x完全一致。这两组精确复现确认：本次的全新下载(除FXHO/BOXL外)与此前几轮的缓存数据在186只股票的实际交易结果上没有引入任何漂移，引擎本身可信。"
+  },
+
+  "task1_zero_volume_filter_backtest": {
+    "method": "在cap40wk+fixed_2x基础上，给swing pivot局部极小值候选池加一条新规则：一周若'该周成交量总和=0'或'该周零成交量交易日占比超过50%(多数)'，则该周不能作为摆动低点候选(不影响baseline_support的26周低点/30周均线，只影响swing_component这一路)。186只股票universe(与前三轮完全一致的symbols186.json)、entry_rise/exit_rise取自_prepared_df()六线rising edge、窗口=每只股票最后交易日(全部为2026-09-08)往前推365日历天、one-position-per-symbol独立模拟，方法论逐条对齐前一轮。",
+    "results": {
+      "cap40wk_fixed2x_no_zerovol_rule": {"overall": {"n": 1180, "win_rate": 0.4237, "profit_factor": 1.8877, "avg_return_pct": 0.031906}, "price_stop_loss_segment": {"n": 560, "win_rate": 0.4161, "profit_factor": 0.6005, "avg_return_pct": -0.007144, "avg_holding_days": 2.41}, "exit_signal_segment": {"n": 620, "win_rate": 0.4306, "profit_factor": 2.2855}, "open_positions_at_window_end": 66},
+      "cap40wk_fixed2x_PLUS_zerovol_rule": {"overall": {"n": 1180, "win_rate": 0.4237, "profit_factor": 1.8877, "avg_return_pct": 0.031906}, "price_stop_loss_segment": {"n": 560, "win_rate": 0.4161, "profit_factor": 0.6005, "avg_return_pct": -0.007144, "avg_holding_days": 2.41}, "exit_signal_segment": {"n": 620, "win_rate": 0.4306, "profit_factor": 2.2855}, "open_positions_at_window_end": 66}
+    },
+    "trade_level_diff_check": "对全部1180笔交易逐笔比较(entry_date/exit_date/entry_price/exit_price/return_pct/exit_reason/symbol七个字段)，加不加零成交量规则的两组结果0笔不同——不是聚合统计凑巧一致，是逐笔字节级相同。",
+    "key_finding_negative": "如实报告：零成交量过滤规则在本次1年期186只股票回测里是完全的no-op，win_rate/PF/样本量与不加这条规则时逐位相同，一笔交易都没有改变。根因(见下方task2)：FXHO的693个零成交量交易日全部落在2021-09-09~2024-08-27，距离本次回测窗口(2025-09-08~2026-09-08)最近的触发日期也超过40周(cap40wk的回看上限)——也就是说，cap40wk这条已经在上一轮采纳的回看上限规则，早就已经把这段零成交量历史彻底排除在候选池之外了，零成交量规则要防的东西，cap40wk已经先一步防住了，属于规则重叠、没有增量价值，不是规则本身写错了。"
+  },
+
+  "universe_wide_zero_volume_days_check": {
+    "method": "对186只股票逐一检查本次全新下载的5年窗口内是否存在成交量=0的交易日(不只是FXHO)。",
+    "result": {
+      "symbols_with_any_zero_volume_day": {
+        "FXHO": {"n_zero_vol_days": 693, "date_range": "2021-09-09~2024-08-27", "close_range_on_those_days": "231250~7750000"},
+        "INDV": {"n_zero_vol_days": 201, "date_range": "2021-09-09~2023-06-01", "close_range_on_those_days": "3.13~24.58(与全历史3.13~41.83同量级，非FXHO式天文数字)"},
+        "RUM": {"n_zero_vol_days": 15, "date_range": "2021-09-09~2021-11-24", "close_range_on_those_days": "9.70~9.77(正常量级)"},
+        "AXIL": {"n_zero_vol_days": 4, "date_range": "2024-02-16~2026-02-10", "close_range_on_those_days": "3.75~13.5(正常量级)"},
+        "RGTI": {"n_zero_vol_days": 3, "date_range": "2021-09-28~2021-09-30", "close_range_on_those_days": "9.77(正常量级)"}
+      },
+      "symbols_with_zero_volume_WEEKS_flagged_by_new_rule": {"FXHO": "148/262周被标记(该周总成交量=0或零成交量日占比超50%)", "INDV": "40/262周被标记", "RGTI": "1/262周被标记", "RUM": "3/262周被标记", "AXIL": "0/135周(4个零成交量日分散在4个不同周，每周占比都不到50%，未达'该周多数'门槛，不被标记)", "BOXL": "0/262周(全程无零成交量日)"},
+      "impact_on_swing_component_full_history": {
+        "FXHO": "754/1254行的swing_component因新规则而改变(候选池被排除后大量NaN或改取其他候选)，但改变的行全部集中在2022年(深度历史)，本次1年回测窗口(2025-09~2026-09)内的行一行都没变。",
+        "INDV": "153/1254行改变(例如2022-04-04~2022-04-18那几周的swing_component从17.05变为14.9)，同样全部落在2022年历史，不在1年回测窗口内，且改变幅度本身也很温和(17.05→14.9，不是量级级别的变化)，不像FXHO那样是'排除掉明显荒谬的数字'。",
+        "AXIL_RGTI_RUM": "swing_component一行都没变——这几只股票的零成交量周恰好都不是局部极小值候选，新规则对它们完全不起作用(不是规则失效，是这几只股票的具体走势没有触发这条规则要防的场景)。",
+        "BOXL": "swing_component一行都没变(全程无零成交量日，规则天然不适用)。"
+      },
+      "conclusion": "零成交量过滤规则本身逻辑生效、且行为符合设计(该排除的候选确实被排除了)，但对186只股票universe里除FXHO/INDV外的其余标的完全没有产生任何计算上的影响；即使是FXHO/INDV，受影响的历史区间也全部在1年回测窗口之外，因此对本次的186只股票1年期实盘式回测结果零副作用、也零收益——不存在'意外误伤了其他标的交易结果'的情况，但也没有额外解决问题。"
+    }
+  },
+
+  "task2_fxho_boxl_8points_recheck": {
+    "method": "直接抽取strategy_backtest_chande_kroll_and_swing_pivot.json的data_quality_finding_boxl_fxho字段和strategy_backtest_swing_pivot_lookback_capped_refreshed.json的fxho_boxl_before_after字段里点名的全部8个(symbol,date)污染点位，用本次'零成交量过滤+cap40wk+fixed_2x异常值过滤+全新一致缓存'完整配置重新计算，逐一对比。",
+    "points": [
+      {"symbol": "FXHO", "date": "2025-09-10", "close_this_round": 6600.0, "swing_component": 13550.0, "baseline_support": 7213.0, "ratio": 1.8785, "week_is_zero_volume": false, "zerovol_rule_applies": false, "outlier_2x_flagged": false, "support_level_filtered_FINAL": 13550.0, "resolved": false, "why_zerovol_rule_didnt_help": "该点位的swing_component来自2024-12-20或2025-01-31这一周(同为13550，40周cap边界内的最早候选之一)，这两周都有真实(虽然稀薄)的成交量，不是零成交量周——零成交量规则的适用范围(2021-2024影子期)和这个污染点的成因(2024年11月~2025年9月这段真实交易期内、split调整尚未追上后续几次缩股导致的价格量级剧烈跳变)完全是两个不同的问题，规则设计上就不可能覆盖到这里。", "why_2x_filter_didnt_help": "比值1.8785低于2.0的阈值线，与上一轮结论一致(未解决)。"},
+      {"symbol": "FXHO", "date": "2026-06-04", "close_this_round": 10.5, "swing_component": 4455.0, "baseline_support": 33.7887, "ratio": 131.85, "week_is_zero_volume": false, "zerovol_rule_applies": false, "outlier_2x_flagged": true, "support_level_filtered_FINAL": 33.7887, "resolved": true, "resolved_by": "仅fixed_2x异常值过滤(与上一轮完全相同的解决路径，零成交量规则没有参与，因为2025-08-29那一周同样有真实成交量，不是零成交量周)"},
+      {"symbol": "FXHO", "date": "2026-07-08", "close_this_round": 14.52, "swing_component": 31.75, "baseline_support": 23.0437, "ratio": 1.378, "outlier_2x_flagged": false, "support_level_filtered_FINAL": 31.75, "note": "本身已不再异常，与前几轮一致，不需要解决"},
+      {"symbol": "FXHO", "date": "2026-07-15", "close_this_round": 19.02, "swing_component": 27.3, "baseline_support": 22.5613, "ratio": 1.21, "outlier_2x_flagged": false, "support_level_filtered_FINAL": 27.3, "note": "同上，本身已不再异常"},
+      {"symbol": "BOXL", "date": "2026-02-10", "close_this_round": 10.38, "swing_component": 63.0, "baseline_support": 44.3472, "ratio": 1.42, "week_is_zero_volume": false, "zerovol_rule_applies": "BOXL全程无零成交量日，这条规则对BOXL从一开始就不可能起作用", "outlier_2x_flagged": false, "support_level_filtered_FINAL": 63.0, "resolved": false, "why": "比值1.42落在合法高波动股票的正常分布区间内(上一轮已查明DOCS最高达2.46倍)，无法用比值区分，也不是零成交量问题——与上一轮结论完全一致，未解决。"},
+      {"symbol": "BOXL", "date": "2026-04-08", "close_this_round": 7.14, "swing_component": 56.16, "baseline_support": 28.0224, "ratio": 2.004, "outlier_2x_flagged": true, "support_level_filtered_FINAL": 28.0224, "resolved": true, "resolved_by": "仅fixed_2x异常值过滤，零成交量规则不参与(BOXL无零成交量日)"},
+      {"symbol": "BOXL", "date": "2026-07-07", "close_this_round": 4.74, "swing_component": 27.36, "baseline_support": 7.5516, "ratio": 3.624, "outlier_2x_flagged": true, "support_level_filtered_FINAL": 7.5516, "note": "本次全新下载下这一点比值(3.624)高于2倍线，被2x过滤器过滤——与strategy_backtest_swing_pivot_shortcap_outlierfilter_portfolio.json里对这个点位'本身已不再异常'的表述不完全一致(那一轮的表述基于当时的缓存快照，未把2x过滤器逐点套用在这个非'4个核心点位'之一的点上做记录)；如实报告这次的独立复算结果，不强行套用上一轮的定性描述。这不是'解决又復發'，而是不同轮次用不同时间点的下载数据得到的独立结果，本身就在预期内(yfinance数据会随下载时点漂移，前几轮报告反复强调过这一点)。"},
+      {"symbol": "BOXL", "date": "2026-07-13", "close_this_round": 4.26, "swing_component": 7.38, "baseline_support": 6.9029, "ratio": 1.069, "outlier_2x_flagged": false, "support_level_filtered_FINAL": 7.38, "note": "本身已不再异常，与前几轮一致"}
+    ],
+    "summary_4_core_tracked_points": "上一轮'task_b_outlier_filter'明确追踪的4个点位(FXHO 09-10/FXHO 06-04/BOXL 02-10/BOXL 04-08)，本轮解决情况与上一轮完全相同：2/4已解决(FXHO 06-04、BOXL 04-08，均由fixed_2x异常值过滤单独解决)，2/4仍未解决(FXHO 09-10比值1.8785、BOXL 02-10比值1.42，两者都卡在2倍阈值之下)。零成交量过滤规则对这4个点位没有贡献任何额外解决——如实报告，不美化：本轮新增的这条规则对'用户点名的4个已知污染点位'的解决率是0/4新增贡献。"
+  },
+
+  "task3_overall_improvement_retained": {
+    "conclusion": "改善完整保留，因为零成交量规则对1年回测窗口是完全no-op：price_stop_loss_segment win_rate=41.61%/PF=0.6005/n=560，与上一轮cap40wk+fixed_2x(不含零成交量规则)逐位相同，相对纯baseline(win_rate=37.95%/PF=0.4323/n=469)的改善(+3.66个百分点/PF+0.168)完整保留，没有任何衰减。",
+    "side_effects_on_other_186_symbols": "见universe_wide_zero_volume_days_check：186只股票里只有FXHO/INDV/RUM/AXIL/RGTI这5只存在零成交量交易日(BOXL没有)，逐一核查后其中只有FXHO和INDV的swing_component计算值受到规则影响，且改变的行全部在2022年深度历史、不在1年回测窗口内，因此对186只股票的实际回测交易结果(entry/exit/return)没有产生任何意外影响，正面负面都没有。"
+  },
+
+  "task4_remaining_unresolved_honest_assessment": {
+    "still_unresolved_points": ["FXHO 2025-09-10(比值1.8785，卡在2倍异常值阈值下方)", "BOXL 2026-02-10(比值1.42，同样卡在阈值下方)"],
+    "why_zero_volume_filter_cannot_help_here": "这条新规则设计目的是排除'真实交易开始前的影子占位数据'(FXHO 2021-2024那693天零成交量、价格几百万到几千万美元/股的区间)——这个目的已经达成(见task1，规则逻辑正确生效，754/153行swing_component在深度历史里被正确改变)。但用户点名的4个已知污染点位，其swing_component来源周(FXHO的2024-12-20/2025-01-31、BOXL的2025-06-27附近)全部落在真实交易已经开始、有真实(哪怕稀薄)成交量的时期，根本不是零成交量数据——这条规则从设计范围上就不覆盖这类污染，不是规则实现有bug。",
+    "actual_root_cause_of_remaining_contamination": "FXHO在2024-09~2026-06间做了5次真实缩股(累计约125万比1)，BOXL在2023-06~2026-06间做了4次(累计约1440比1)。yfinance的auto_adjust=True会把'当前已知的全部缩股'统一追溯应用到整条历史价格上——对于2024年11月到2025年9月这段真实交易期而言，当时公司已经完成了第1次缩股，但还没完成后续3-4次；用今天(2026-09)的视角下载历史数据时，yfinance要把这段时期的原始(未反映后续缩股的)价格，用后续那3-4次缩股的累计比例(FXHO约5万比1)整体放大，导致这段真实交易期在'今天调整后'的口径下显示出几千到两万美元的价格量级——这个数字本身在算术上是'正确'的split-adjustment结果，不是脏数据、不是bug，只是因为累计缩股比例太极端(百万分之一量级)，导致同一支股票在不同缩股区间之间的'调整后价格'完全不可比，而swing pivot机制恰好把不可比的两段时期的价格直接拿来比大小。",
+    "why_this_is_outside_our_control_boundary": "这是yfinance/vendor侧auto_adjust=True的标准行为(把已知的全部拆股/缩股无差别地整体追溯应用到全历史)，不是我们缓存层或计算逻辑的bug，我们控制范围内能做的只有(a)像_cache_stale_relative_to_new_splits()那样确保'看到最新缩股信息'(已验证有效，见下)，(b)在支撑位公式层面加异常值过滤/回看上限这类事后防护(已经做到能做的程度)。真正从根源解决，需要要么切换到不做这种整体回溯调整的数据源，要么在检测到'股票近2年内发生过多次高比例缩股'时，直接放弃使用缩股窗口跨越前后的历史价格做支撑位计算——这两条都超出了本轮任务范围，如实记录为已知边界，不在本次任务内实现。"
+  },
+
+  "cache_guard_verification": {
+    "requirement": "用户明确要求不假设_cache_stale_relative_to_new_splits()已经解决问题，要独立验证。本次任务的主线流程(freeze_snapshot.py)因为FXHO/BOXL缓存已被预先清空，第一次调用天然就是全新下载(下载时间晚于全部已知缩股生效日)，这条防护在主线流程里根本没有'过期缓存'可拦截，无法在正常流程里观察到它触发——如实报告这一点，不回避。",
+    "isolated_synthetic_test": {
+      "method": "为了独立验证防护的判定与执行逻辑本身正确，构造一个受控场景：拿到freeze_snapshot.py运行后FXHO的新缓存文件(写入时间=今天，内容已完整反映全部5次已知缩股)，只人为把这个文件的mtime往回改到'FXHO最近一次已知缩股生效日(2026-06-22)之前30天'，不改动文件内容，然后分别检查(a)_cache_stale_relative_to_new_splits()是否正确判定为stale，(b)load_ohlcv()是否真的据此重新下载(而不是判定了但没有真正采取行动)。",
+      "results": {
+        "guard_verdict_on_genuinely_fresh_cache": false,
+        "latest_known_split_date_for_FXHO_at_test_time": "2026-06-22",
+        "guard_verdict_after_backdating_mtime_to_30_days_before_that_split": true,
+        "load_ohlcv_actually_redownloaded_after_backdating": true,
+        "post_redownload_2025_09_10_close_still_6600": true
+      },
+      "conclusion": "本次独立、受控测试首次实证确认：_cache_stale_relative_to_new_splits()不仅判定逻辑正确(mtime早于最新缩股日→判定为stale)，而且load_ohlcv()确实会据此触发真正的重新下载(不是只返回True但没被上游使用)，重新下载后的数据与本任务其余流程使用的冻结快照数值一致(2025-09-10收盘价同样是6600，没有引入新的不一致)。这解决了任务发起前'这层防护没有被验证能完整解决问题'的悬而未决状态——防护本身的触发链路(判定→重新下载→数据一致)在本次独立测试中端到端验证通过。但如实报告边界：这个测试证明的是'防护机制本身工作正常'，不代表'防护机制能追上未来所有新发生的缩股'——它依赖的前提是_latest_split_date()能查到最新的split记录，如果yfinance自己的split记录出现滞后或缺失，这层防护同样会失效，这部分不在我们控制范围内。"
+    }
+  },
+
+  "verification": {
+    "method": "对最终配置(zero_volume_filter + cap40wk + fixed_2x)抽5个通用(symbol,date)点位 + 6个FXHO/BOXL定向点位(超出任务要求的3-5个下限)，用与向量化管道(core_zv.py)完全独立的第二套代码路径(hand_verify.py：手动W-FRI周线resample、手动扫描局部极小值、手动重建周成交量聚合与'该周多数零成交量'判定、手动应用因果确认+cap40回看上限+零成交量候选排除、手动算26周低点/30周均线基线、手动算ratio并应用2倍异常值判定)独立复算，容差0.02。两套代码路径都直接读同一份frozen_ohlcv.pkl快照，因此这一步检验的是算术实现是否一致，不是数据源是否一致(数据源一致性已由fresh_download_confirmation单独确认)。",
+    "general_points": [
+      {"symbol": "AAPL", "date": "2026-06-15", "pipeline": 272.4971, "hand": 272.4971, "match": true},
+      {"symbol": "NVDA", "date": "2026-03-02", "pipeline": 182.9258, "hand": 182.9258, "match": true},
+      {"symbol": "WDAY", "date": "2026-05-08", "pipeline": 233.18, "hand": 233.18, "match": true},
+      {"symbol": "MSFT", "date": "2026-04-01", "pipeline": 506.7903, "hand": 506.7903, "match": true},
+      {"symbol": "CRM", "date": "2026-02-20", "pipeline": 238.7578, "hand": 238.7578, "match": true}
+    ],
+    "fxho_boxl_targeted_points": [
+      {"symbol": "FXHO", "date": "2025-09-10", "pipeline_swing": 13550.0, "hand_swing": 13550.0, "pipeline_filtered": 13550.0, "hand_filtered": 13550.0, "match": true},
+      {"symbol": "FXHO", "date": "2026-06-04", "pipeline_swing": 4455.0, "hand_swing": 4455.0, "pipeline_filtered": 33.7887, "hand_filtered": 33.7887, "match": true},
+      {"symbol": "FXHO", "date": "2026-07-08", "pipeline_swing": 31.75, "hand_swing": 31.75, "pipeline_filtered": 31.75, "hand_filtered": 31.75, "match": true},
+      {"symbol": "BOXL", "date": "2026-02-10", "pipeline_swing": 63.0, "hand_swing": 63.0, "pipeline_filtered": 63.0, "hand_filtered": 63.0, "match": true},
+      {"symbol": "BOXL", "date": "2026-04-08", "pipeline_swing": 56.16, "hand_swing": 56.16, "pipeline_filtered": 28.0224, "hand_filtered": 28.0224, "match": true},
+      {"symbol": "BOXL", "date": "2026-07-07", "pipeline_swing": 27.36, "hand_swing": 27.36, "pipeline_filtered": 7.5516, "hand_filtered": 7.5516, "match": true}
+    ],
+    "result": "11/11全部完全一致(误差=0)——5个通用点位覆盖不同标的/不同月份，6个FXHO/BOXL定向点位覆盖'已解决'(FXHO 06-04/BOXL 04-08)、'未解决'(FXHO 09-10/BOXL 02-10)、'本身已不异常'(FXHO 07-08)、'本轮独立复算新增被过滤'(BOXL 07-07)六种不同情形，向量化实现与手算路径无分歧。"
+  },
+
+  "comparison_table": [
+    {"variant": "纯baseline(26周低点/30周均线，本轮独立复现)", "stop_n": 469, "stop_win_rate": 0.3795, "stop_pf": 0.4323},
+    {"variant": "cap40wk+fixed_2x(上一轮最优，本轮独立复现)", "stop_n": 560, "stop_win_rate": 0.4161, "stop_pf": 0.6005},
+    {"variant": "cap40wk+fixed_2x+零成交量过滤(本轮新配置)", "stop_n": 560, "stop_win_rate": 0.4161, "stop_pf": 0.6005, "note": "与不加零成交量规则逐笔完全相同(0笔交易被改变)"}
+  ],
+
+  "key_finding": "零成交量过滤规则本身实现正确、逻辑生效(候选池排除按设计工作，全新下载确认FXHO在5年窗口内有693个零成交量交易日、价格量级达数百万到数千万，规则正确识别并排除了这些周作为摆动低点候选)，但对本次186只股票1年期回测【完全没有产生任何可观测的效果】——不是部分解决，是逐笔字节级的零变化。根因清楚：cap40wk这个上一轮已经采纳的回看上限规则，早已把FXHO 2021-2024那段零成交量历史排除在40周候选窗口之外，零成交量规则要防的场景与cap40wk已经防住的场景完全重叠，没有增量价值；BOXL在本次5年窗口内则完全没有零成交量交易日，这条规则对BOXL从设计上就不可能起作用。\n用户点名的4个核心污染点位，本轮解决情况与上一轮(cap40wk+fixed_2x，不含零成交量规则)完全相同：FXHO 2026-06-04和BOXL 2026-04-08已解决(均由fixed_2x异常值过滤单独完成)，FXHO 2025-09-10(比值1.8785)和BOXL 2026-02-10(比值1.42)仍未解决，两者都卡在2倍阈值下方。深入追查后本轮新确认了这两个残留点位的真实成因：不是零成交量式的'影子占位数据'，而是FXHO/BOXL在2023-2026年间密集发生的多次真实高比例缩股(FXHO 5次累计约125万比1，BOXL 4次累计约1440比1)，导致yfinance的auto_adjust=True把不同缩股窗口之间原本不可比的历史价格，用今天已知的全部累计缩股比例强行统一追溯调整，产生了算术上'正确'但业务上不可比的价格量级跳变——这是vendor(yfinance)标准行为，不是我们数据管道的bug，明确超出本仓库能修复的范围。\n本次全新下载确认FXHO 2025-09-10收盘价=6600(与用户此前在4份旧缓存文件上观察到的一致数字吻合，不是缓存造成的偶发读数)。用一个独立构造的受控测试(人为把刚下载的新鲜缓存文件mtime往回改到最近一次已知缩股日之前)首次端到端证实了_cache_stale_relative_to_new_splits()防护确实会触发真正的重新下载，不只是判定逻辑正确——这填补了任务发起前'这层防护没有被验证'的空白，但同时如实报告：本次任务的主线流程里，因为FXHO/BOXL缓存已被预先清空、第一次调用天然是全新下载，这层防护在主线流程本身没有(也不可能有)被触发的机会——它的价值是面向未来(下一次有新缩股发生但本地缓存还没更新的场景)，不是本次任务的结果由它产生的。",
+
+  "recommendation": "维持上一轮'继续观察、暂不上线'的姿态，并进一步收紧理由：cap40wk+fixed_2x异常值过滤这套配置(1)在per-symbol层面有真实、非样本塌缩的止损段改善(win_rate 37.95%→41.61%，PF 0.4323→0.6005)，本轮独立复现完全一致；(2)本轮新增的零成交量过滤规则虽然实现正确、且对186只股票universe没有任何副作用(不会误伤任何标的)，但对'解决FXHO/BOXL已知污染'这个原定目标贡献为零——不建议单独因为这条规则而改变risk_rules.json现状；(3)本轮最重要的新增价值是诊断层面：查明了FXHO/BOXL剩余2个未解决点位的真实成因是密集真实缩股导致的split-adjustment跨窗口不可比，而不是此前怀疑的'未妥善处理的拆股'式数据bug——这意味着继续在'支撑位公式'这一层加更多过滤规则(不管是零成交量、回看上限还是异常值阈值)大概率都无法完全解决这两个残留点位，因为问题根源在于vendor的复权方法论本身，不在我们的计算逻辑。如果未来要继续推进，建议的下一步不再是'再调一个过滤器参数'，而是(a)对'近2年内发生过≥3次累计缩股比例超过100:1的标的'做专门检测和特殊处理(例如直接禁用缩股窗口跨越前后的历史价格参与支撑位计算，而不是事后用比值过滤)，或(b)切换/交叉验证一个不做整体回溯复权的行情源。在此之前，risk_rules.json的现有支撑位公式应保持不变。_cache_stale_relative_to_new_splits()这层防护本身经本轮独立测试确认工作正常，建议保留在lib/stockstats_utils.py里作为面向未来的常规加固，与是否采纳摆动支撑位机制这个决定无关。"
+}

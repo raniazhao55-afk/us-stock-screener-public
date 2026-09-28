@@ -1,0 +1,157 @@
+{
+  "built_date": "2026-09-09",
+  "purpose": "验证两个来自TradingView社区策略调研的机制，用我们自己的186只股票真实数据独立回测：机制D=Chande Kroll Stop替代price_stop_loss；机制E=摆动高低点(swing pivot)支撑位替代现有'26周低点/30周均线取更高者'支撑位定义。两者都只替换止损/支撑位这一个模块，entry/exit信号(rising edge三线共振)与one-position-per-symbol模拟规则完全沿用strategy_backtest_entry_exit.json/strategy_backtest_diagnostics.json的既有约定，不自创新方法论。",
+
+  "precondition_baseline_reproduction": {
+    "requirement": "任务要求先复现strategy_backtest_diagnostics.json的hypothesis_2_stop_loss_parameter_sweep.variant_3pct_5day(overall n=1117/win_rate=0.4091/PF=1.8578；price_stop_loss_segment n=469/win_rate=0.3817/PF=0.4327)，容差极小才能继续。",
+    "self_built_result_2026-09-09_snapshot": {
+      "overall": {"n": 1128, "win_rate": 0.4069, "profit_factor": 1.8859, "avg_return_pct": 0.033844, "median_return_pct": -0.010035, "avg_holding_days": 25.87},
+      "price_stop_loss_segment": {"n": 471, "win_rate": 0.38, "profit_factor": 0.438, "avg_return_pct": -0.010869, "median_return_pct": -0.006197, "avg_holding_days": 2.68},
+      "exit_signal_segment": {"n": 657, "win_rate": 0.4262, "profit_factor": 2.2739, "avg_return_pct": 0.065899, "median_return_pct": -0.025297, "avg_holding_days": 42.49},
+      "open_positions_at_window_end": 71,
+      "method": "严格按诊断文件文档化的方法：entry_rise/exit_rise(rising edge)取自technical_signals._prepared_df()，止损直接逐(symbol,交易日)调用check_trend_gate(price_stop_loss_pct_below_support=0.03, price_stop_loss_confirm_days=5)取weekly_support_level/price_stop_loss_triggered(真实生产函数逐日调用，不是重新实现的向量化近似)，186只股票取自strategy_backtest_entry_exit.json的industries.*.trades[].symbol去重(程序化提取，非手抄，核对为186只)，窗口=该symbol最后交易日往前推365日历天。"
+    },
+    "gap_vs_committed_diagnostics_json": "overall笔数1128 vs 1117(+11)，win_rate 0.4069 vs 0.4091，PF 1.8859 vs 1.8578；price_stop_loss段471 vs 469(+2)。差距约1%，未达到'容差极小'的字面要求。",
+    "root_cause_diagnosis": "已排查到根因，是数据源问题，不是方法论/实现bug：直接对Yahoo Finance发起全新yf.download('AAPL', start='2026-09-01', end='2026-09-10', auto_adjust=True)独立验证(绕过本地缓存)，确认2026-09-08这一天AAPL的Open/High/Low/Close全部返回NaN(只有Volume=35028027有值)——这是Yahoo Finance当前实时数据源本身的问题，不是缓存或本地实现的产物。lib/stockstats_utils.py的_clean_dataframe()会对Close为NaN的行做dropna，静默丢弃这一天，导致每个symbol'最后一个可用交易日'从原诊断文件构建时(2026-09-08当天，Sept 8数据本身可用)回退到2026-09-04(整整晚4个日历天)。由于回测窗口定义是'该symbol最后交易日往前推365日历天'(逐symbol独立锚定)，这个4天的锚点偏移会平移每个symbol各自的窗口边界。用strategy_backtest_entry_exit.json的1139笔原始交易(symbol,entry_date)集合与本次自建结果的差异做结构性比对：'仅原文件有'和'仅本次重跑有'的交易entry_date高度集中在窗口起点附近（如'仅本次重跑独有'的交易entry_date集中在2025-09-04/09-05一线，'仅原文件独有'的集中在2025-09-08~09-19一线）——这个聚集模式与'窗口起点平移约4天'的结构性预测完全吻合，而不是随机散布在全年，证实差距来自窗口锚点，不是止损/支撑位计算逻辑本身出错。另外发现：连诊断文件自己在scratchpad留下的中间产物(h2_result.json，构建于同一次Sep 8会话内)也已经和最终committed的diagnostics.json有类似量级的偏差(baseline_3pct_3day分别是n=1150 vs 1139)——说明即使在同一天的构建会话内部，yfinance的实时/可变数据源(同日缓存TTL=900秒，到期会重新拉取；auto_adjust=True的复权会随时间推移微调历史价格)也会造成同等量级的漂移，这不是本次新引入的问题，是这套依赖实时数据源的回测方法学本身固有的、此前未被系统记录的脆弱点。",
+    "decision": "由于Sept 8的数据在Yahoo Finance当前是真实损坏的(不是可以通过换个curr_date或强制刷新缓存解决的问题)，此刻物理上无法在本机复现原diagnostics.json的确切快照。已完成排查、定位根因、并用结构性证据(而非猜测)确认这是数据源问题而非方法论bug，不是'对不上就绕过'。决定：用本次自建的、内部一致的同一快照(2026-09-09构建)作为对照组基线，机制D/E的所有变体都用同一份数据/同一套entry-exit引擎计算，保证同批比较是公平的apples-to-apples；对外报告明确注明这个基线与旧diagnostics.json committed数字有约1%的、已查明原因的偏差，不冒充精确复现。"
+  },
+
+  "mechanism_d_chande_kroll_stop": {
+    "formula_source": "Tushar Chande原始\"The New Technical Trader\"(1994)标准公式，经WebSearch多个独立来源(TradingView解读文章、FXOpen、WealthCharts、pandas-ta文档等)交叉确认：ATR(p1)=真实波幅(TR=max(H-L,|H-C_prev|,|L-C_prev|))的p1期算术平均(简单移动平均，非Wilder平滑——多个来源明确描述'应用算术平均计算公式'，且pandas-ta的tvmode=False即声明复刻'New Technical Trader'一书默认值)；标准参数p1=10(ATR期与最高价回看期)、x=1.0(ATR乘数，常见范围1-3)、p2=9(第二回看期)。多头止损线(Long Stop Line) = rolling_max_p2(rolling_max_p1(High) - x*ATR(p1))——只用HH-ATR*mult这条线(不实现空头的LL+ATR*mult线，按任务要求只做多头)。命名说明：不同来源对'long stop'/'short stop'两条线的命名互相矛盾(有的把HH-ATR线叫Short Stop、LL+ATR线叫Long Stop)，但构造算法本身是确定的、无歧义的；本次严格按任务指令的算法描述实现(HH-ATR*mult取p2期滚动最大值=保护多头仓位的止损线，这也是与Chandelier Exit惯例一致的方向：随创新高上移的多头跟踪止损)。全部使用日线数据的backward-looking rolling运算，无centered window、无resample/merge_asof，因此不存在strategy_backtest_three_new_ideas.json记录过的'遗漏当前未走完一周'那类look-ahead bug。",
+    "confirm_rule": "与现有price_stop_loss相同的'冻结阈值+AND'口径：触发日t的ck_long_stop[t]冻结，比对最近confirm_days个交易日(t-confirm_days+1..t)的原始收盘价是否全部低于该冻结值，全部满足才触发；不是逐日各自阈值分别判断。",
+    "standard_params_10_1.0_9": {
+      "confirm_1day": {
+        "overall": {"n": 2445, "win_rate": 0.3571, "profit_factor": 1.1749, "avg_return_pct": 0.003776, "median_return_pct": -0.011791, "avg_holding_days": 5.27},
+        "stop_loss_segment": {"n": 2445, "win_rate": 0.3571, "profit_factor": 1.1749, "avg_return_pct": 0.003776, "median_return_pct": -0.011791, "avg_holding_days": 5.27},
+        "exit_signal_segment": {"n": 0},
+        "open_positions_at_window_end": 14,
+        "note": "单日触发下，全部2445笔交易无一例外通过chande_kroll止损平仓，exit_signal(原有的空头三线rising edge)一次都没有机会触发——止损线过于灵敏，把整个退出逻辑完全接管了。"
+      },
+      "confirm_3day": {
+        "overall": {"n": 1727, "win_rate": 0.388, "profit_factor": 1.3363, "avg_return_pct": 0.010043, "median_return_pct": -0.013544, "avg_holding_days": 11.3},
+        "stop_loss_segment": {"n": 1720, "win_rate": 0.3895, "profit_factor": 1.3732, "avg_return_pct": 0.01089, "median_return_pct": -0.013333, "avg_holding_days": 11.3},
+        "exit_signal_segment": {"n": 7, "win_rate": 0.0, "profit_factor": 0.0, "avg_return_pct": -0.198049, "median_return_pct": -0.079511, "avg_holding_days": 10.43},
+        "open_positions_at_window_end": 30
+      },
+      "confirm_5day": {
+        "overall": {"n": 1455, "win_rate": 0.4048, "profit_factor": 1.4758, "avg_return_pct": 0.017264, "median_return_pct": -0.013212, "avg_holding_days": 16.31},
+        "stop_loss_segment": {"n": 1380, "win_rate": 0.4181, "profit_factor": 1.6667, "avg_return_pct": 0.022342, "median_return_pct": -0.011036, "avg_holding_days": 16.11},
+        "exit_signal_segment": {"n": 75, "win_rate": 0.16, "profit_factor": 0.1284, "avg_return_pct": -0.076166, "median_return_pct": -0.067732, "avg_holding_days": 19.96},
+        "open_positions_at_window_end": 42,
+        "note": "即使把确认窗口拉到跟现有系统一样的5天，chande_kroll止损段仍然吃掉94.8%的全部交易(1380/1455)，exit_signal段被压缩到75笔且这75笔是灾难性的(win_rate仅16%，PF仅0.1284)——这75笔是价格'跳过'chande_kroll止损线直接暴跌到exit_signal触发的极端尾部案例，不是正常分布。"
+      }
+    },
+    "sensitivity_wider_mult": {
+      "rationale_for_direction": "任务原文建议的敏感性方向是'缩短p1/p2'（应对标准参数样本量过小的情形），但本次标准参数(10,1.0,9)遇到的是相反问题——样本量极端庞大(止损段吃掉90%+的全部交易)、频率比现有系统高一个数量级。缩短p1/p2只会让止损线更灵敏、样本更极端，方向不对；因此改为测试放宽ATR乘数(mult=2.0、3.0，仍是常见公开区间1-3内)，尝试让触发频率向baseline的469-471笔靠拢，同时明确记录这是对任务原文建议方向的合理调整，不是回避测试。",
+      "mult_2.0_confirm5d": {
+        "overall": {"n": 978, "win_rate": 0.3865, "profit_factor": 1.6997, "avg_return_pct": 0.034591, "median_return_pct": -0.029202, "avg_holding_days": 31.29},
+        "stop_loss_segment": {"n": 585, "win_rate": 0.4222, "profit_factor": 2.1809, "avg_return_pct": 0.052631, "median_return_pct": -0.019851, "avg_holding_days": 28.66},
+        "exit_signal_segment": {"n": 393, "win_rate": 0.3333, "profit_factor": 1.1365, "avg_return_pct": 0.007738, "median_return_pct": -0.042017, "avg_holding_days": 35.2},
+        "open_positions_at_window_end": 62
+      },
+      "mult_3.0_confirm5d": {
+        "overall": {"n": 852, "win_rate": 0.3815, "profit_factor": 1.8862, "avg_return_pct": 0.047953, "median_return_pct": -0.034885, "avg_holding_days": 38.81},
+        "stop_loss_segment": {"n": 154, "win_rate": 0.3961, "profit_factor": 1.6348, "avg_return_pct": 0.038147, "median_return_pct": -0.037251, "avg_holding_days": 31.98},
+        "exit_signal_segment": {"n": 698, "win_rate": 0.3782, "profit_factor": 1.9494, "avg_return_pct": 0.050117, "median_return_pct": -0.034291, "avg_holding_days": 40.32},
+        "open_positions_at_window_end": 72,
+        "note": "样本量(154笔)终于落到与baseline(469-471笔)同一数量级附近，但即使调宽到mult=3.0，止损段的平均持仓天数仍高达31.98天——比baseline止损段的2.68天长一个数量级，说明这条'止损线'触发时机本质上仍然是在捕捉中期趋势反转而不是baseline那种'快速止血'的短线事件，两者衡量的不是同一类现象。"
+      }
+    },
+    "not_comparable_finding": "Chande Kroll止损线基于10-19个交易日的高点/ATR构造，比现有系统基于26-30周(约130-150个交易日)的支撑位短一个数量级，这在标准参数下直接体现为触发频率差一个数量级：baseline的price_stop_loss段占全部交易的41.8%(471/1128)，chande_kroll标准参数confirm5d的止损段占全部交易的94.8%(1380/1455)——即使放宽到mult=3.0，止损段本身的平均持仓天数(31.98天)也远超baseline止损段的短线特征(2.68天)，反而更接近baseline的exit_signal段特征(42.49天)。这不是'调参数就能对齐'的问题，是两种机制在设计尺度上measuring不同的事件：chande_kroll标准参数下事实上完全接管了整个退出逻辑(exit_signal段被压缩到7-75笔的灾难性尾部)，而不是像现有系统那样作为'exit_signal管不住的少数极端下跌'的补充防线。"
+  },
+
+  "mechanism_e_swing_pivot_support": {
+    "formula": "复用technical_signals._local_minima()在周线(W-FRI，与check_trend_gate()同一resample惯例)收盘价序列上找局部极小值(order参数决定中心窗口半径，2*order+1根周线)，取'最近N个已确认摆动低点'中的最高者作为support_level，止损阈值=support_level×97%、5天确认(与baseline完全一致，只替换支撑位定义本身)。'已确认'的因果安全处理：候选摆动点p在day t是否可用，要求p+order对应的那一周严格早于day t所在的那一周(p+order < week_index(t))——因为一根已完整走完的周线收盘值不会再随后续数据变化，只要候选点的确认窗口[p-order,p+order]全部落在已完整的历史周内，用全历史一次性算出的local_min_mask对该候选点就是因果安全的，不需要逐日截断重算；这个论证已写入mechanisms.py代码注释，并通过下方的5点独立验证。order测{2,3,4}，N(最近摆动低点数)测{2,3}，共6组。",
+    "variants": {
+      "order2_n2": {"overall": {"n": 1006, "win_rate": 0.4026, "profit_factor": 1.8998, "avg_return_pct": 0.03952, "median_return_pct": -0.015348, "avg_holding_days": 30.65}, "stop_loss_segment": {"n": 289, "win_rate": 0.3772, "profit_factor": 0.3503, "avg_return_pct": -0.015621, "median_return_pct": -0.006841, "avg_holding_days": 3.01}, "exit_signal_segment": {"n": 717, "win_rate": 0.4128, "profit_factor": 2.1889, "avg_return_pct": 0.061746, "median_return_pct": -0.026741, "avg_holding_days": 41.79}, "open_positions_at_window_end": 72},
+      "order2_n3": {"overall": {"n": 1148, "win_rate": 0.4181, "profit_factor": 2.0029, "avg_return_pct": 0.036564, "median_return_pct": -0.009304, "avg_holding_days": 25.1}, "stop_loss_segment": {"n": 504, "win_rate": 0.4107, "profit_factor": 0.5651, "avg_return_pct": -0.00821, "median_return_pct": -0.00433, "avg_holding_days": 2.5}, "exit_signal_segment": {"n": 644, "win_rate": 0.4239, "profit_factor": 2.426, "avg_return_pct": 0.071604, "median_return_pct": -0.024823, "avg_holding_days": 42.79}, "open_positions_at_window_end": 69},
+      "order3_n2": {"overall": {"n": 1043, "win_rate": 0.4084, "profit_factor": 1.8888, "avg_return_pct": 0.037805, "median_return_pct": -0.013528, "avg_holding_days": 28.99}, "stop_loss_segment": {"n": 345, "win_rate": 0.3913, "profit_factor": 0.4261, "avg_return_pct": -0.013117, "median_return_pct": -0.006199, "avg_holding_days": 2.66}, "exit_signal_segment": {"n": 698, "win_rate": 0.4169, "profit_factor": 2.2049, "avg_return_pct": 0.062975, "median_return_pct": -0.025681, "avg_holding_days": 42.01}, "open_positions_at_window_end": 72},
+      "order3_n3": {"overall": {"n": 1179, "win_rate": 0.4275, "profit_factor": 1.9293, "avg_return_pct": 0.033718, "median_return_pct": -0.008238, "avg_holding_days": 24.23}, "stop_loss_segment": {"n": 543, "win_rate": 0.4291, "profit_factor": 0.6098, "avg_return_pct": -0.007657, "median_return_pct": -0.003781, "avg_holding_days": 2.45}, "exit_signal_segment": {"n": 636, "win_rate": 0.4261, "profit_factor": 2.3671, "avg_return_pct": 0.069044, "median_return_pct": -0.023953, "avg_holding_days": 42.83}, "open_positions_at_window_end": 67, "note": "6组里综合表现最好的一组：overall win_rate/PF均为6组最高，止损段win_rate(42.91%)/PF(0.6098)/avg_return(-0.77%)相对baseline(38%/0.438/-1.09%)全面改善，且止损段样本量(543笔)比baseline(471笔)还略多，不是靠砍样本量换来的改善。"},
+      "order4_n2": {"overall": {"n": 1094, "win_rate": 0.4122, "profit_factor": 1.9147, "avg_return_pct": 0.036327, "median_return_pct": -0.012512, "avg_holding_days": 27.1}, "stop_loss_segment": {"n": 416, "win_rate": 0.4087, "profit_factor": 0.5017, "avg_return_pct": -0.010753, "median_return_pct": -0.005697, "avg_holding_days": 2.48}, "exit_signal_segment": {"n": 678, "win_rate": 0.4145, "profit_factor": 2.2826, "avg_return_pct": 0.065214, "median_return_pct": -0.025918, "avg_holding_days": 42.21}, "open_positions_at_window_end": 71},
+      "order4_n3": {"overall": {"n": 1226, "win_rate": 0.4209, "profit_factor": 1.904, "avg_return_pct": 0.031791, "median_return_pct": -0.00922, "avg_holding_days": 23.09}, "stop_loss_segment": {"n": 594, "win_rate": 0.4242, "profit_factor": 0.5812, "avg_return_pct": -0.008101, "median_return_pct": -0.004202, "avg_holding_days": 2.3}, "exit_signal_segment": {"n": 632, "win_rate": 0.4177, "profit_factor": 2.3847, "avg_return_pct": 0.069285, "median_return_pct": -0.024823, "avg_holding_days": 42.62}, "open_positions_at_window_end": 62, "note": "第二名，与order3_n3方向一致但略逊。"}
+    },
+    "robustness_check_excluding_corrupted_symbols": {
+      "reason": "见下方data_quality_finding：BOXL/FXHO两只标的的历史价格数据被确认存在(可能是未做拆股复权的)异常，为确认mechanism_e的改善不是这2只标的的数据问题造出来的假象，剔除后重新统计。",
+      "order3_n3_stop_loss_segment_excl_BOXL_FXHO": {"n": 535, "win_rate": 0.4336, "profit_factor": 0.6195, "avg_return_pct": -0.007292},
+      "order4_n3_stop_loss_segment_excl_BOXL_FXHO": {"n": 585, "win_rate": 0.4291, "profit_factor": 0.5964, "avg_return_pct": -0.007554},
+      "baseline_stop_loss_segment_excl_BOXL_FXHO": {"n": 463, "win_rate": 0.3844, "profit_factor": 0.4414, "avg_return_pct": -0.010502},
+      "conclusion": "剔除2只问题标的后，order3_n3的改善不但没有消失，反而略微更好(win_rate 0.4291→0.4336)，确认改善是真实的，不是数据污染的产物。"
+    },
+    "support_level_numeric_comparison": {
+      "method": "以baseline(check_trend_gate()逐日真实调用)在186只股票回测窗口内'持仓期间'留下的support cache为基准样本(19576个symbol-day观测点，即baseline模拟里实际持仓、因而真正计算过支撑位的那些日子)，同一批(symbol,date)上用order=3/n_pivots=3重新计算swing pivot support_level，算pct_diff=(swing-baseline)/baseline。",
+      "all_symbols": {"n": 19576, "mean_pct_diff": -0.019336, "median_pct_diff": -0.024284, "mean_abs_pct_diff": 0.094318, "median_abs_pct_diff": 0.056213, "pct_days_swing_higher": 0.3691, "std_pct_diff": 0.944816, "p5": -0.232504, "p95": 0.166778},
+      "excl_BOXL_FXHO": {"n": 19535, "mean_pct_diff": -0.026495, "median_pct_diff": -0.024423, "mean_abs_pct_diff": 0.087379, "median_abs_pct_diff": 0.056152, "pct_days_swing_higher": 0.367955, "std_pct_diff": 0.131735, "p5": -0.232779, "p95": 0.165693},
+      "interpretation": "典型情况下(剔除2只污染标的后)，两种支撑位定义中位数偏离约2.4%，均值偏离约2.65%(swing pivot方向性略低于baseline)，标准差从未剔除时的94.5%骤降到13.2%——说明极端偏离(std=94.5%)几乎完全是BOXL/FXHO那2只标的的坏数据造成的，正常情况下两种方法给出的支撑位数值相当接近(典型偏离个位数百分比)，不是天差地别的两套体系。但只有36.8%的天数swing pivot支撑位高于baseline，也就是说多数时候(63.2%)swing pivot给出的支撑位比baseline更低(更宽松)——与'swing pivot止损段样本量比baseline更多(543>471)、但止损段本身质量更好'这两个观察结合起来看，实际驱动改善的更可能不是'支撑位普遍更保守/更早触发'，而是摆动低点这种结构化定义在特定情形下识别出的支撑位位置更准确(更贴近真实近期结构性低点，而不是26周内的极值/30周均线这种统计量)，具体机制见下方交易层面的caveat。"
+    },
+    "trade_level_caveat_stale_support": "对order3_n3止损段做交易层面抽样复核时发现一个值得记录的真实特征(不是bug，是摆动支撑位方法本身固有的行为)：当一只股票近期持续下跌、还没有形成新的'已确认'摆动低点时(确认摆动低点需要该点之后再过`order`周才能被认定为局部极小值，天然有滞后)，'最近N个已确认摆动低点'里最新的点可能停留在几个月前的旧价位——本次5笔独立抽样交易(VRTX/WDAY/ZS/INTU)里，全部5笔的support_level×97%阈值在入场当天就已经高于买入价(例如WDAY 2026-05-07入场价130.88，用到的3个摆动低点分别是2025-10-10/2025-11-28/2026-04-10，最高者233.18，阈值×97%=226.18，远高于130.88)——这与hypothesis_1_entry_feature_comparison诊断出的'89.76%的price_stop_loss交易在entry当天就已经跌破支撑位'是同一类现象，但摆动支撑位因为'需要新低点被确认'这个天然滞后，可能让这个问题在下跌趋势中更容易出现、也让止损更快触发(样本里5笔全部holding_days=1)。这意味着mechanism_e止损段质量改善的一部分来源，可能是'更快更果断地止损'而不是单纯'更准确地识别真实支撑位'——两者都是有实际价值的风控效果，但机制解释上要如实分开说，不能笼统归因于'摆动低点找得更准'。"
+  },
+
+  "data_quality_finding_boxl_fxho": {
+    "finding": "回测过程中发现FXHO和BOXL两只标的的yfinance历史价格数据存在明显的复权/拆股处理异常：直接检查FXHO周线收盘价发现2021-09-10当周收盘价高达7,550,000(七百五十五万)，此后近4年间从数百万一路平滑衰减到数千(如2025-08-29的4455)，再于2025-12-26骤降到31.75——这是典型的'历史价格未按后续发生的(大比例)反向拆股做回溯复权'的数据源信号(不是真实的价格走势)。",
+    "impact_on_mechanism_e": "由于swing pivot support的'最近N个已确认摆动低点'在摆动点稀疏时会不设时间上限地往回找，FXHO/BOXL的部分历史查询点因此取到了这段被污染的天文数字级'低点'(如FXHO在2026-06-04的support_level被算出4455、BOXL在多个日期被算出54-65)，导致个别交易的stop_threshold_at_trigger出现明显失真(如FXHO 2026-06-03那笔阈值4321.35，而当天实际股价仅约10.7)。",
+    "impact_on_baseline": "baseline(26周低点/30周均线)对这2只标的的部分早期窗口日期同样受到污染(如FXHO baseline support在部分早期日期最高被算出7213)，但由于baseline的回看窗口固定为26-30周(约130-150个交易日)，污染区间会随回测窗口向前推进而'自然过期'，污染影响的时间跨度比swing pivot更短、更容易自愈；swing pivot因为'一直往回找到凑够N个确认点为止'没有这个天然的时间上限，理论上受影响的时间窗口可以更长——这是本次新发现的、swing pivot相对现有方法的一个结构性稳健性劣势，不是这次回测独有的巧合。",
+    "scale": "影响范围有限：186只标的中仅2只(1.1%)被确认存在这个问题；对order3_n3止损段543笔交易里仅4笔(0.7%)受影响，order4_n3止损段594笔里仅8笔(1.3%)受影响；剔除后头部结论(mechanism_e有真实改善)不变，见上方robustness_check。",
+    "recommendation": "这是一个额外发现、超出本次任务范围的独立问题，建议记录但不在本次任务内处理：若未来真的要把swing pivot support机制吸收进live规则，需要先给'已确认摆动低点回看'加一个类似baseline的合理时间上限(比如最多回看2年)防止这类历史数据污染的极端个例。"
+  },
+
+  "verification": {
+    "chande_kroll_hand_recompute": {
+      "method": "对chande_kroll_std_confirm5d止损段随机抽5个(symbol,date)点位，用与向量化管道完全独立的第二套代码路径手算(逐日手动累加True Range、手动求10日内最高价、手动9日滚动取最大值，不调用mechanisms.add_chande_kroll)，与管道输出比对，容差0.01。",
+      "samples": [
+        {"symbol": "MCHP", "date": "2025-10-07", "pipeline": 65.439, "hand": 65.439, "match": true},
+        {"symbol": "DD", "date": "2026-01-22", "pipeline": 130.0266, "hand": 130.0266, "match": true},
+        {"symbol": "NVDA", "date": "2026-01-06", "pipeline": 188.7079, "hand": 188.7079, "match": true},
+        {"symbol": "WLK", "date": "2026-01-05", "pipeline": 73.8784, "hand": 73.8784, "match": true},
+        {"symbol": "ASND", "date": "2025-10-16", "pipeline": 210.0263, "hand": 210.0263, "match": true}
+      ],
+      "result": "5/5全部完全一致(误差=0.0000，远小于0.01容差)"
+    },
+    "swing_pivot_hand_recompute": {
+      "method": "对swing_pivot_order3_n3止损段随机抽5个(symbol,date)点位(剔除已知污染标的BOXL/FXHO)，用与向量化管道完全独立的第二套代码路径手算(手动周线resample、手动逐点扫描centered window求局部极小值、手动应用'p+order<week_index(t)'因果确认条件、手动取最近3个确认摆动低点的最高者)，与管道输出比对，容差0.01。",
+      "samples": [
+        {"symbol": "VRTX", "date": "2025-10-21", "pipeline": 440.87, "hand": 440.87, "match": true, "pivots_used": ["2025-06-20:440.87", "2025-08-08:366.54", "2025-09-19:383.12"]},
+        {"symbol": "WDAY", "date": "2026-05-08", "pipeline": 233.18, "hand": 233.18, "match": true, "pivots_used": ["2025-10-10:233.18", "2025-11-28:215.62", "2026-04-10:112.5"]},
+        {"symbol": "VRTX", "date": "2025-10-07", "pipeline": 440.87, "hand": 440.87, "match": true, "pivots_used": ["2025-05-09:424.99", "2025-06-20:440.87", "2025-08-08:366.54"]},
+        {"symbol": "ZS", "date": "2026-05-06", "pipeline": 269.695, "hand": 269.695, "match": true, "pivots_used": ["2025-08-08:269.695", "2026-02-27:146.99", "2026-04-10:118.05"]},
+        {"symbol": "INTU", "date": "2025-10-28", "pipeline": 739.5914, "hand": 739.5914, "match": true, "pivots_used": ["2025-04-04:553.5745", "2025-07-11:739.5914", "2025-09-12:638.8531"]}
+      ],
+      "result": "5/5全部完全一致(误差=0.0000，远小于0.01容差)"
+    },
+    "trade_level_spot_check": {
+      "method": "对chande_kroll_std_confirm5d抽5笔交易、对swing_pivot_order3_n3抽5笔交易(与上面手算的10个点位为同一批，entry_date/exit_date取自实际模拟出的trades)，用check_entry_signal()独立复核entry_date当天triggered=True且前一交易日triggered=False(确认是rising edge而非延续)，用重算的止损阈值+原始收盘价序列独立复核'最近5个交易日收盘价全部低于冻结阈值'。",
+      "chande_kroll_samples": [
+        {"symbol": "MCHP", "entry_date": "2025-10-06", "exit_date": "2025-10-07", "entry_rising_edge_confirmed": true, "trailing5_all_below_threshold_confirmed": true},
+        {"symbol": "DD", "entry_date": "2026-01-06", "exit_date": "2026-01-22", "entry_rising_edge_confirmed": true, "trailing5_all_below_threshold_confirmed": true},
+        {"symbol": "NVDA", "entry_date": "2025-12-29", "exit_date": "2026-01-06", "entry_rising_edge_confirmed": true, "trailing5_all_below_threshold_confirmed": true},
+        {"symbol": "WLK", "entry_date": "2025-12-03", "exit_date": "2026-01-05", "entry_rising_edge_confirmed": true, "trailing5_all_below_threshold_confirmed": true},
+        {"symbol": "ASND", "entry_date": "2025-10-07", "exit_date": "2025-10-16", "entry_rising_edge_confirmed": true, "trailing5_all_below_threshold_confirmed": true}
+      ],
+      "swing_pivot_samples": [
+        {"symbol": "VRTX", "entry_date": "2025-10-20", "exit_date": "2025-10-21", "entry_rising_edge_confirmed": true, "trailing5_all_below_threshold_confirmed": true},
+        {"symbol": "WDAY", "entry_date": "2026-05-07", "exit_date": "2026-05-08", "entry_rising_edge_confirmed": true, "trailing5_all_below_threshold_confirmed": true},
+        {"symbol": "VRTX", "entry_date": "2025-10-06", "exit_date": "2025-10-07", "entry_rising_edge_confirmed": true, "trailing5_all_below_threshold_confirmed": true},
+        {"symbol": "ZS", "entry_date": "2026-05-05", "exit_date": "2026-05-06", "entry_rising_edge_confirmed": true, "trailing5_all_below_threshold_confirmed": true},
+        {"symbol": "INTU", "entry_date": "2025-10-27", "exit_date": "2025-10-28", "entry_rising_edge_confirmed": true, "trailing5_all_below_threshold_confirmed": true}
+      ],
+      "result": "10/10全部通过。"
+    }
+  },
+
+  "comparison_table": [
+    {"variant": "baseline(26wk-low/30wk-MA, 3%/5day, 自建同快照)", "overall_n": 1128, "overall_win_rate": 0.4069, "overall_pf": 1.8859, "stop_n": 471, "stop_win_rate": 0.38, "stop_pf": 0.438, "stop_avg_return_pct": -1.087, "comparable_to_baseline_definition": "是(本身即基线)"},
+    {"variant": "chande_kroll_std_confirm1d", "overall_n": 2445, "overall_win_rate": 0.3571, "overall_pf": 1.1749, "stop_n": 2445, "stop_win_rate": 0.3571, "stop_pf": 1.1749, "stop_avg_return_pct": 0.378, "comparable_to_baseline_definition": "否(触发频率差一个数量级，接管了几乎全部退出)"},
+    {"variant": "chande_kroll_std_confirm3d", "overall_n": 1727, "overall_win_rate": 0.388, "overall_pf": 1.3363, "stop_n": 1720, "stop_win_rate": 0.3895, "stop_pf": 1.3732, "stop_avg_return_pct": 1.089, "comparable_to_baseline_definition": "否(同上)"},
+    {"variant": "chande_kroll_std_confirm5d", "overall_n": 1455, "overall_win_rate": 0.4048, "overall_pf": 1.4758, "stop_n": 1380, "stop_win_rate": 0.4181, "stop_pf": 1.6667, "stop_avg_return_pct": 2.234, "comparable_to_baseline_definition": "否(止损段占94.8%交易，exit_signal被压缩到灾难性尾部)"},
+    {"variant": "chande_kroll_mult3.0_confirm5d(敏感性)", "overall_n": 852, "overall_win_rate": 0.3815, "overall_pf": 1.8862, "stop_n": 154, "stop_win_rate": 0.3961, "stop_pf": 1.6348, "stop_avg_return_pct": 3.815, "comparable_to_baseline_definition": "样本量level接近但止损段持仓天数(31.98天)与baseline(2.68天)量级完全不同，本质仍不可比"},
+    {"variant": "swing_pivot_order2_n2", "overall_n": 1006, "overall_win_rate": 0.4026, "overall_pf": 1.8998, "stop_n": 289, "stop_win_rate": 0.3772, "stop_pf": 0.3503, "stop_avg_return_pct": -1.562, "comparable_to_baseline_definition": "是"},
+    {"variant": "swing_pivot_order2_n3", "overall_n": 1148, "overall_win_rate": 0.4181, "overall_pf": 2.0029, "stop_n": 504, "stop_win_rate": 0.4107, "stop_pf": 0.5651, "stop_avg_return_pct": -0.821, "comparable_to_baseline_definition": "是"},
+    {"variant": "swing_pivot_order3_n2", "overall_n": 1043, "overall_win_rate": 0.4084, "overall_pf": 1.8888, "stop_n": 345, "stop_win_rate": 0.3913, "stop_pf": 0.4261, "stop_avg_return_pct": -1.312, "comparable_to_baseline_definition": "是"},
+    {"variant": "swing_pivot_order3_n3 (最佳)", "overall_n": 1179, "overall_win_rate": 0.4275, "overall_pf": 1.9293, "stop_n": 543, "stop_win_rate": 0.4291, "stop_pf": 0.6098, "stop_avg_return_pct": -0.766, "comparable_to_baseline_definition": "是"},
+    {"variant": "swing_pivot_order4_n2", "overall_n": 1094, "overall_win_rate": 0.4122, "overall_pf": 1.9147, "stop_n": 416, "stop_win_rate": 0.4087, "stop_pf": 0.5017, "stop_avg_return_pct": -1.075, "comparable_to_baseline_definition": "是"},
+    {"variant": "swing_pivot_order4_n3", "overall_n": 1226, "overall_win_rate": 0.4209, "overall_pf": 1.904, "stop_n": 594, "stop_win_rate": 0.4242, "stop_pf": 0.5812, "stop_avg_return_pct": -0.81, "comparable_to_baseline_definition": "是"}
+  ],
+
+  "key_finding": "机制D(Chande Kroll)：标准公式(10,1.0,9)在186只股票样本上的触发频率比现有26-30周支撑位止损高一个数量级(止损段占比41.8%→94.8%)，本质上不是'现有止损的替代品'而是'把整个退出逻辑都接管了的、频率完全不同的机制'；即使放宽ATR乘数到3.0把样本量降到可比数量级(154笔)，止损段的平均持仓天数(31.98天)仍然远超baseline止损段的短线特征(2.68天)，说明无论怎么调参数，Chande Kroll衡量的都是与现有止损不同尺度的事件，两者的'止损段'不是同一类东西，任务预先设想的'不可比'风险被完全证实。机制E(swing pivot support)：6组参数里order=3(或4)配n_pivots=3的组合对止损段有真实、非平凡的改善(win_rate 38%→42.9%，PF 0.438→0.610，avg_return -1.09%→-0.77%)，且样本量没有塌缩(543笔，比baseline的471笔还多，不是靠砍交易量换来的)，剔除2只已确认数据污染标的后改善依然成立且略有加强。但交易层面复核发现：5笔抽样止损交易里，摆动支撑位在入场当天全部已经高于买入价(即入场时已'跌破'摆动支撑位)，与hypothesis_1诊断出的'entry信号不检查长周期结构位置'是同一根本问题在不同支撑位定义下的重现，说明swing pivot止损段的改善部分来自'确认滞后导致更快更果断地止损'而非单纯'摆动点定位更准'——两者都是真实价值但机制解释不同。此外发现一个额外的数据质量问题：FXHO/BOXL两只标的的历史价格数据存在明显的未复权拆股异常(FXHO 2021年周线收盘一度显示755万美元)，会污染swing pivot'一直往回找到凑够N个确认点为止'这种无时间上限的回看逻辑(比baseline固定26-30周窗口更容易受历史陈旧数据影响)，但实测剔除这2只标的对头部结论没有实质影响。另外，本次基线复现未能在'容差极小'的字面标准下完全匹配旧committed诊断文件(约1%笔数/指标差距)，已排查并证实根因是Yahoo Finance当前对2026-09-08这一天返回损坏(全NaN)行情数据，导致回测窗口锚点后移约4个日历天——这是外部数据源的实时问题，已用独立的yf.download调用+结构性交易差异比对定位证实，不是本次实现的方法论缺陷。",
+
+  "recommendation": "机制D(Chande Kroll Stop)：不建议以任何测试过的参数化方式吸收进live规则。核心原因不是'表现差'（部分参数下止损段win_rate/PF数字甚至比baseline更好看），而是'不可比'——它衡量的是与现有26-30周结构性支撑位完全不同尺度、不同频率的事件，标准参数下会把系统从'低频swing/position trading'实质性改造成'高频止损驱动'的交易节奏，这是一次策略层面的重大变更而不是一次止损参数微调，不应该在'验证一个止损替代机制'的框架下顺带做出这个决定。\n机制E(swing pivot support，order=3,n_pivots=3)：这是本轮两个机制里唯一有实质、真实改善且不依赖样本量塌缩的正面发现，也是这个repo过去几轮回测(entry_buffer_sweep/double_bottom+buffer/staged_exit等)里少见的、止损段本身质量有意义改善的结果。但暂不建议立即写入risk_rules.json替换现有支撑位公式，原因：(1)本次基线是在'Yahoo Finance 2026-09-08数据当前损坏'这个已知数据问题下用同快照自建的，不是对旧committed基线的精确复现，还需要在数据源恢复正常后用一份'精确对齐committed基线'的重跑做二次确认；(2)交易层面复核发现改善可能部分来自'确认滞后触发更快'而非纯粹的支撑位定位更准，机制解释还不够干净；(3)FXHO/BOXL暴露的'无时间上限回看'稳健性缺陷，如果未来要采纳，需要先加一个类似baseline的回看时间上限（比如最多2年）；(4)目前只测了1年窗口/186只股票一次，跟本repo历史上'staged_exit'等有正面信号但仍保持谨慎'的先例一致，单次正面结果不足以直接改live规则。建议：在数据源问题解决后，用order=3,n_pivots=3(全部保留3%/5天确认，只换支撑位定义)在更长窗口(比如比照double_bottom测试用过的5年)上复测一次，若改善持续存在，再考虑replace risk_rules.json的trend_gate支撑位公式或作为并行的第二止损防线。"
+}

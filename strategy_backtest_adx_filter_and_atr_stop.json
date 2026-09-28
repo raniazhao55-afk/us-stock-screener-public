@@ -1,0 +1,784 @@
+{
+  "built_date": "2026-09-09",
+  "purpose": "验证两个来自TradingView社区策略调研的机制是否值得吸收进live风控：机制A = ADX(14)趋势强度entry过滤器(来源: 'ADX Trend Strength Filter + TRAMA'阈值30、'Turtle Strategy Triple EMA+ADX+ATR'阈值43，本次测20/25/30/35)；机制B = ATR(14)自适应止损，替代现有周线支撑位×97%止损(来源: 'ATR Trailing Stop Strategy with EMA Trend Filter'、'Turtle Strategy' 1.8x ATR 止损/3.3x ATR止盈，本次测固定距离和移动跟踪两种子变体，各扫1.5/2.0/2.5x)；机制C = A+B最优组合。两个机制的设计意图都直接针对已诊断出的问题：51%的entry信号触发时价格已跌破周线支撑，price_stop_loss段系统性亏钱(见strategy_backtest_diagnostics.json/risk_rules.json的trend_gate._comment)。",
+  "universe": {
+    "n_symbols": 186,
+    "source": "strategy_backtest_entry_exit.json 的 industries.*.trades[].symbol 去重"
+  },
+  "methodology_note": "完全遵循既有向量化day-aligned resample+merge_asof方法论(entry_buffer_sweep.json/diagnostics.json的methodology_note)：entry信号=MA5>10>20且close>5sma+MACD多头+RSI6>12>24且RSI6>50三线同时rising edge(technical_signals.check_entry_signal()的entry_state定义)；exit信号=镜像空头rising edge；one-position-per-symbol-at-a-time；窗口=每只股票最后一个交易日往前推365日历天(不足用全部历史)；baseline止损=周线支撑位(max(最近26周收盘最低点,30周均线))×97%，连续5个交易日收盘价<'当天算出的冻结阈值'(不是逐日各自阈值)——与risk_rules.json live trend_gate参数(3%缓冲/5天确认)完全一致。\n\n【重要】数据快照冻结说明：strategy_backtest_diagnostics.json/entry_buffer_sweep.json都built_date=2026-09-08，本次任务开始于2026-09-09。us-stock-data的load_ohlcv()按pd.Timestamp.today()动态生成缓存文件名(...-{today+1d}.csv)，意味着2026-09-09当天直接调用load_ohlcv()会触发全新的5年数据重新下载，而yfinance用auto_adjust=True，任何新增除权除息事件都会让全部历史收盘价重新调整，导致边界附近的少数交易翻转(实测：直接重跑h2_sweep_v2.py，variant_3pct_5day从n=1117变成n=1128，win_rate从0.4091变成0.4078——不是方法论偏差，是数据源随时间自然漂移)。为保证跟既有诊断文件严格同口径可比，本次改用一个'pinned'OHLCV加载器(pinned_data.py)，直接读取2026-09-08当天生成、文件名后缀为'-2026-09-09.csv'的缓存CSV(即diagnostics.json/entry_buffer_sweep.json构建时用的同一份快照)，186只股票全部命中，不触发任何新下载。用这份冻结快照复现variant_3pct_5day: overall n=1117(目标1117，一致)/win_rate=0.4082(目标0.4091)/PF=1.8577(目标1.8578，几乎一致)；price_stop_loss_segment n=469(目标469，一致)/win_rate=0.3795(目标0.3817)/PF=0.4323(目标0.4327，几乎一致)。win_rate的微小残差(整体0.0009=1117笔中1笔，止损段0.0022=469笔中1笔)经排查定位到CRCT(2026-02-18entry, 2026-02-19exit)这一笔交易return_pct=0.0000(entry_price==exit_price)，恰好卡在win/loss分类边界(returns>0记win，<=0记loss)——原diagnostics文件的同一笔交易在其构建时刻的缓存里return_pct大概率是极小的正数(sub-cent级别的yfinance同日两次抓取精度差异)，被算作win；本次快照里恰好是0.0000，被算作loss。人工验证：若把这1笔从loss改记为win，两组win_rate精确对齐(0.4082→0.4091, 0.3795→0.3817)，PF不受影响(return=0贡献为0，不进gross_profit/gross_loss)。结论：这是单笔flat-return交易的浮点边界效应，不是状态机/止损逻辑/信号口径的偏差，可以放心在此基础上继续测试新机制。\n\n机制A实现：entry_rise触发当天，要求ADX(14)>threshold才允许买入(threshold∈{20,25,30,35}，35为task要求的'样本量够则补测参考'档)，止损侧完全不变(3%缓冲/5天确认)。机制B实现：entry/exit信号逻辑完全不变(不叠加ADX)，只替换止损：固定距离=买入当天记录entry_price和ATR(14)，止损线=entry_price-ATR×multiplier，此后任意交易日收盘价<止损线立即触发(无需多日确认，因为ATR本身已经是波动率标准化距离，这是TradingView原脚本用法)；移动跟踪=止损线=持仓期间最高收盘价-ATR(14 at entry，入场时刻的ATR值固定不变)×multiplier，止损线只能上移。两种子变体各扫multiplier∈{1.5,2.0,2.5}。机制C：机制A最优阈值(ADX>25，见下方key_finding)分别叠加机制B两种子变体各自的最优PF参数(ATR fixed x2.5 / ATR trailing x2.5)，两组combo都测了。",
+  "indicator_implementation_and_verification": {
+    "adx14": {
+      "critical_finding": "stockstats库的默认'adx'列(df['adx'])不是标准Wilder ADX(14)！源码(stockstats.py L242-244, L855-857)显示：+DI/-DI/DX确实用标准14期Wilder平滑(DX_SMMA=14，正确)，但DX→ADX这一步用的是6期EMA(ADX_EMA=6，且self.ema()是adjust=True的标准EMA，不是Wilder SMMA)，不是教科书定义的'ADX=DX的14期Wilder平滑'。实测同一交易日两种算法给出的数值可以差一倍以上(如AAPL 2026-06-15：stockstats默认adx=14.39，标准Wilder ADX(14)=32.96；NVDA 2026-03-10：stockstats=19.84，标准=15.19)——量级和方向都不可靠，不能直接采用。这印证了任务背景提到的教训(a-stock-data项目东财数据源的坑)：不能假设库函数实现了'标准'定义，必须独立验证。",
+      "resolution": "改为自己实现标准Wilder ADX(14)：TR/+DM/-DM用Wilder's smoothing(RMA，首值=前14个原始值的简单平均，此后递推 X[i]=X[i-1]-X[i-1]/14+x[i]/14)，+DI14=100×smoothed(+DM)/ATR14，-DI14同理，DX=100×|+DI14- -DI14|/(+DI14+-DI14)，ADX=DX的14期Wilder平滑(首值=前14个DX的简单平均，此后同样递推)。写了两版独立实现：wilder_adx_atr_loop()(纯Python逐行循环，教科书式seeding，作为ground truth)和wilder_adx_atr_vectorized()(pandas .ewm(alpha=1/14, adjust=False)近似，用于186只股票的完整回测，图速度)。二者理论上会在seeding衰减后收敛一致(样本历史~5年远超14期时间常数的数十倍衰减窗口)。"
+    },
+    "atr14": {
+      "finding": "stockstats的'atr'列(默认window=14)：_get_atr()→self._atr(14)=self.smma(tr,14)，self.smma()=series.ewm(alpha=1/14, adjust=True).mean()——这是Wilder-一致的平滑(TR公式本身也标准:max(H-L,|H-Cprev|,|L-Cprev|))，可以直接采用。"
+    },
+    "cross_check_5_points": [
+      {
+        "symbol": "AAPL",
+        "date": "2026-06-15",
+        "loop_adx14": 32.9624,
+        "vectorized_adx14": 32.9624,
+        "stockstats_default_adx_WRONG": 14.3869,
+        "loop_atr14": 7.2655,
+        "vectorized_atr14": 7.2655,
+        "stockstats_atr14": 7.2655,
+        "adx_diff_loop_vs_vectorized": 0.0,
+        "atr_diff_loop_vs_vectorized": 0.0,
+        "atr_diff_loop_vs_stockstats": 0.0
+      },
+      {
+        "symbol": "NVDA",
+        "date": "2026-03-10",
+        "loop_adx14": 15.1926,
+        "vectorized_adx14": 15.1926,
+        "stockstats_default_adx_WRONG": 19.8393,
+        "loop_atr14": 6.2994,
+        "vectorized_atr14": 6.2994,
+        "stockstats_atr14": 6.2994,
+        "adx_diff_loop_vs_vectorized": 0.0,
+        "atr_diff_loop_vs_vectorized": 0.0,
+        "atr_diff_loop_vs_stockstats": 0.0
+      },
+      {
+        "symbol": "MSFT",
+        "date": "2025-12-05",
+        "loop_adx14": 27.1015,
+        "vectorized_adx14": 27.1015,
+        "stockstats_default_adx_WRONG": 29.9818,
+        "loop_atr14": 9.904,
+        "vectorized_atr14": 9.904,
+        "stockstats_atr14": 9.904,
+        "adx_diff_loop_vs_vectorized": 0.0,
+        "atr_diff_loop_vs_vectorized": 0.0,
+        "atr_diff_loop_vs_stockstats": 0.0
+      },
+      {
+        "symbol": "CRM",
+        "date": "2026-07-01",
+        "loop_adx14": 18.8392,
+        "vectorized_adx14": 18.8392,
+        "stockstats_default_adx_WRONG": 16.3117,
+        "loop_atr14": 7.1963,
+        "vectorized_atr14": 7.1963,
+        "stockstats_atr14": 7.1963,
+        "adx_diff_loop_vs_vectorized": 0.0,
+        "atr_diff_loop_vs_vectorized": 0.0,
+        "atr_diff_loop_vs_stockstats": 0.0
+      },
+      {
+        "symbol": "AMD",
+        "date": "2025-10-20",
+        "loop_adx14": 34.3636,
+        "vectorized_adx14": 34.3636,
+        "stockstats_default_adx_WRONG": 49.7315,
+        "loop_atr14": 11.5124,
+        "vectorized_atr14": 11.5124,
+        "stockstats_atr14": 11.5124,
+        "adx_diff_loop_vs_vectorized": 0.0,
+        "atr_diff_loop_vs_vectorized": 0.0,
+        "atr_diff_loop_vs_stockstats": 0.0
+      }
+    ],
+    "cross_check_result": "5/5点位ADX(14)：loop ground truth与vectorized实现完全一致(diff=0.0000)，与stockstats默认adx列差异巨大(证实上面的critical_finding，不可用)。5/5点位ATR(14)：loop ground truth、vectorized实现、stockstats的atr列三者完全一致(diff=0.0000)。容差：要求0.0001，实际全部是精确0.0000匹配。首次尝试loop版本时ATR曾出现~14倍的系统性偏差(101.72 vs 7.27)，排查后发现是递推公式漏写了/period项(X[i]=X[i-1]-X[i-1]/14+tr[i]少了/14)——这个bug没有影响ADX/DX/DI，因为DI=100×sm_pdm/atr是比值，分子分母同时被放大~14倍会互相抵消，只有ATR原始数值本身受影响；修复后5点全部精确匹配，过程记录在案作为'独立验证确实抓到了真实bug'的证据。"
+  },
+  "baseline_reproduction": {
+    "target_from_diagnostics_json": {
+      "overall": {
+        "n": 1117,
+        "win_rate": 0.4091,
+        "profit_factor": 1.8578
+      },
+      "price_stop_loss_segment": {
+        "n": 469,
+        "win_rate": 0.3817,
+        "profit_factor": 0.4327
+      }
+    },
+    "reproduced_on_pinned_dataset": {
+      "overall": {
+        "n": 1117,
+        "win_rate": 0.4082,
+        "profit_factor": 1.8577,
+        "avg_return_pct": 0.033239,
+        "median_return_pct": -0.010067,
+        "avg_holding_days": 25.85
+      },
+      "price_stop_loss_segment": {
+        "n": 469,
+        "win_rate": 0.3795,
+        "profit_factor": 0.4323,
+        "avg_return_pct": -0.011169,
+        "median_return_pct": -0.006235,
+        "avg_holding_days": 2.68
+      },
+      "exit_signal_segment": {
+        "n": 648,
+        "win_rate": 0.429,
+        "profit_factor": 2.2438,
+        "avg_return_pct": 0.06538,
+        "median_return_pct": -0.026461,
+        "avg_holding_days": 42.63
+      },
+      "open_positions_at_window_end": 68
+    },
+    "match_status": "n和profit_factor完全/几乎完全复现；win_rate的1笔交易级残差已定位并解释(见methodology_note)。判定：方法论正确复现，可以在此基础上继续。"
+  },
+  "mechanism_a_adx_filter": {
+    "thresholds_tested": {
+      "20": {
+        "overall": {
+          "n": 674,
+          "win_rate": 0.4154,
+          "profit_factor": 1.7598,
+          "avg_return_pct": 0.032044,
+          "median_return_pct": -0.01101,
+          "avg_holding_days": 28.6
+        },
+        "stop_loss_segment": {
+          "n": 232,
+          "win_rate": 0.4138,
+          "profit_factor": 0.4798,
+          "avg_return_pct": -0.010334,
+          "median_return_pct": -0.004043,
+          "avg_holding_days": 2.64
+        },
+        "exit_signal_segment": {
+          "n": 442,
+          "win_rate": 0.4163,
+          "profit_factor": 2.0075,
+          "avg_return_pct": 0.054288,
+          "median_return_pct": -0.025746,
+          "avg_holding_days": 42.23
+        },
+        "open_positions_at_window_end": 43,
+        "entry_triggers": 1766,
+        "entry_allowed": 717,
+        "entry_blocked_by_adx": 1049
+      },
+      "25": {
+        "overall": {
+          "n": 448,
+          "win_rate": 0.4308,
+          "profit_factor": 2.0304,
+          "avg_return_pct": 0.043695,
+          "median_return_pct": -0.010446,
+          "avg_holding_days": 31.88
+        },
+        "stop_loss_segment": {
+          "n": 128,
+          "win_rate": 0.4453,
+          "profit_factor": 0.4628,
+          "avg_return_pct": -0.009468,
+          "median_return_pct": -0.003227,
+          "avg_holding_days": 2.59
+        },
+        "exit_signal_segment": {
+          "n": 320,
+          "win_rate": 0.425,
+          "profit_factor": 2.2416,
+          "avg_return_pct": 0.06496,
+          "median_return_pct": -0.023804,
+          "avg_holding_days": 43.6
+        },
+        "open_positions_at_window_end": 32,
+        "entry_triggers": 2028,
+        "entry_allowed": 480,
+        "entry_blocked_by_adx": 1548
+      },
+      "30": {
+        "overall": {
+          "n": 281,
+          "win_rate": 0.4342,
+          "profit_factor": 2.0727,
+          "avg_return_pct": 0.04405,
+          "median_return_pct": -0.009504,
+          "avg_holding_days": 34.76
+        },
+        "stop_loss_segment": {
+          "n": 64,
+          "win_rate": 0.375,
+          "profit_factor": 0.3727,
+          "avg_return_pct": -0.013835,
+          "median_return_pct": -0.00775,
+          "avg_holding_days": 2.42
+        },
+        "exit_signal_segment": {
+          "n": 217,
+          "win_rate": 0.4516,
+          "profit_factor": 2.3096,
+          "avg_return_pct": 0.061122,
+          "median_return_pct": -0.011565,
+          "avg_holding_days": 44.3
+        },
+        "open_positions_at_window_end": 24,
+        "entry_triggers": 2246,
+        "entry_allowed": 305,
+        "entry_blocked_by_adx": 1941
+      },
+      "35": {
+        "overall": {
+          "n": 176,
+          "win_rate": 0.4091,
+          "profit_factor": 2.2857,
+          "avg_return_pct": 0.061079,
+          "median_return_pct": -0.010446,
+          "avg_holding_days": 39.6
+        },
+        "stop_loss_segment": {
+          "n": 26,
+          "win_rate": 0.3077,
+          "profit_factor": 0.2891,
+          "avg_return_pct": -0.020717,
+          "median_return_pct": -0.008741,
+          "avg_holding_days": 2.15
+        },
+        "exit_signal_segment": {
+          "n": 150,
+          "win_rate": 0.4267,
+          "profit_factor": 2.4846,
+          "avg_return_pct": 0.075257,
+          "median_return_pct": -0.015322,
+          "avg_holding_days": 46.09
+        },
+        "open_positions_at_window_end": 14,
+        "entry_triggers": 2389,
+        "entry_allowed": 190,
+        "entry_blocked_by_adx": 2199
+      }
+    },
+    "note": "ADX>20/25两档对price_stop_loss段有真实(非虚假)改善：win_rate 0.3795→0.4138/0.4453，PF 0.4323→0.4798/0.4628，且样本量仍充足(n=232/128，远高于15笔的可信下限)。但ADX>30/35两档反而让price_stop_loss段质量变差(win_rate 0.375/0.3077，PF 0.3727/0.2891，均低于baseline)，尽管这两档的overall指标表面看起来最好(PF 2.07/2.29)——这是'门槛越高、entry_allowed样本越少、越可能只是筛掉了低质量symbol整体而非specifically修好price_stop_loss触发质量'的效应，跟entry_buffer_sweep.json诊断出的'砍交易量掩盖问题'模式类似，必须在这两档上如实指出：ADX>35的psl段n=26(仍>15可信下限，但接近边界)，结论'psl段变差'可信但样本已经偏薄，不宜作为决定性证据。"
+  },
+  "mechanism_b_atr_stop": {
+    "variants_tested": {
+      "fixed_1.5": {
+        "overall": {
+          "n": 949,
+          "win_rate": 0.3182,
+          "profit_factor": 1.561,
+          "avg_return_pct": 0.030574,
+          "median_return_pct": -0.045485,
+          "avg_holding_days": 31.38
+        },
+        "stop_loss_segment": {
+          "n": 506,
+          "win_rate": 0.0,
+          "profit_factor": 0.0,
+          "avg_return_pct": -0.090734,
+          "median_return_pct": -0.076217,
+          "avg_holding_days": 11.36
+        },
+        "exit_signal_segment": {
+          "n": 443,
+          "win_rate": 0.6817,
+          "profit_factor": 13.9014,
+          "avg_return_pct": 0.169134,
+          "median_return_pct": 0.052249,
+          "avg_holding_days": 54.26
+        },
+        "open_positions_at_window_end": 69,
+        "n_atr_stop_exits": 506,
+        "of_atr_stop_exits_old_support_rule_would_also_fire_eventually": 137,
+        "of_atr_stop_exits_old_support_rule_never_would_fire_in_window": 369
+      },
+      "fixed_2.0": {
+        "overall": {
+          "n": 886,
+          "win_rate": 0.3454,
+          "profit_factor": 1.5926,
+          "avg_return_pct": 0.034559,
+          "median_return_pct": -0.046976,
+          "avg_holding_days": 35.33
+        },
+        "stop_loss_segment": {
+          "n": 339,
+          "win_rate": 0.0,
+          "profit_factor": 0.0,
+          "avg_return_pct": -0.110308,
+          "median_return_pct": -0.096804,
+          "avg_holding_days": 12.86
+        },
+        "exit_signal_segment": {
+          "n": 547,
+          "win_rate": 0.5594,
+          "profit_factor": 5.7641,
+          "avg_return_pct": 0.124339,
+          "median_return_pct": 0.026269,
+          "avg_holding_days": 49.24
+        },
+        "open_positions_at_window_end": 69,
+        "n_atr_stop_exits": 339,
+        "of_atr_stop_exits_old_support_rule_would_also_fire_eventually": 94,
+        "of_atr_stop_exits_old_support_rule_never_would_fire_in_window": 245
+      },
+      "fixed_2.5": {
+        "overall": {
+          "n": 845,
+          "win_rate": 0.3669,
+          "profit_factor": 1.6929,
+          "avg_return_pct": 0.040346,
+          "median_return_pct": -0.043478,
+          "avg_holding_days": 38.19
+        },
+        "stop_loss_segment": {
+          "n": 210,
+          "win_rate": 0.0,
+          "profit_factor": 0.0,
+          "avg_return_pct": -0.124073,
+          "median_return_pct": -0.108533,
+          "avg_holding_days": 13.46
+        },
+        "exit_signal_segment": {
+          "n": 635,
+          "win_rate": 0.4882,
+          "profit_factor": 3.5984,
+          "avg_return_pct": 0.094721,
+          "median_return_pct": -0.003998,
+          "avg_holding_days": 46.36
+        },
+        "open_positions_at_window_end": 71,
+        "n_atr_stop_exits": 210,
+        "of_atr_stop_exits_old_support_rule_would_also_fire_eventually": 51,
+        "of_atr_stop_exits_old_support_rule_never_would_fire_in_window": 159
+      },
+      "trailing_1.5": {
+        "overall": {
+          "n": 1407,
+          "win_rate": 0.3639,
+          "profit_factor": 1.2759,
+          "avg_return_pct": 0.011432,
+          "median_return_pct": -0.028013,
+          "avg_holding_days": 15.8
+        },
+        "stop_loss_segment": {
+          "n": 1373,
+          "win_rate": 0.3693,
+          "profit_factor": 1.3038,
+          "avg_return_pct": 0.012584,
+          "median_return_pct": -0.027887,
+          "avg_holding_days": 15.66
+        },
+        "exit_signal_segment": {
+          "n": 34,
+          "win_rate": 0.1471,
+          "profit_factor": 0.1748,
+          "avg_return_pct": -0.035073,
+          "median_return_pct": -0.037487,
+          "avg_holding_days": 21.44
+        },
+        "open_positions_at_window_end": 31,
+        "n_atr_stop_exits": 1373,
+        "of_atr_stop_exits_old_support_rule_would_also_fire_eventually": 254,
+        "of_atr_stop_exits_old_support_rule_never_would_fire_in_window": 1119
+      },
+      "trailing_2.0": {
+        "overall": {
+          "n": 1187,
+          "win_rate": 0.3724,
+          "profit_factor": 1.3156,
+          "avg_return_pct": 0.015309,
+          "median_return_pct": -0.030643,
+          "avg_holding_days": 21.54
+        },
+        "stop_loss_segment": {
+          "n": 1070,
+          "win_rate": 0.3916,
+          "profit_factor": 1.4534,
+          "avg_return_pct": 0.021821,
+          "median_return_pct": -0.028782,
+          "avg_holding_days": 21.34
+        },
+        "exit_signal_segment": {
+          "n": 117,
+          "win_rate": 0.1966,
+          "profit_factor": 0.1499,
+          "avg_return_pct": -0.044243,
+          "median_return_pct": -0.040963,
+          "avg_holding_days": 23.43
+        },
+        "open_positions_at_window_end": 43,
+        "n_atr_stop_exits": 1070,
+        "of_atr_stop_exits_old_support_rule_would_also_fire_eventually": 215,
+        "of_atr_stop_exits_old_support_rule_never_would_fire_in_window": 855
+      },
+      "trailing_2.5": {
+        "overall": {
+          "n": 1046,
+          "win_rate": 0.3681,
+          "profit_factor": 1.3614,
+          "avg_return_pct": 0.019657,
+          "median_return_pct": -0.034232,
+          "avg_holding_days": 26.6
+        },
+        "stop_loss_segment": {
+          "n": 818,
+          "win_rate": 0.3949,
+          "profit_factor": 1.6689,
+          "avg_return_pct": 0.03616,
+          "median_return_pct": -0.03201,
+          "avg_holding_days": 26.49
+        },
+        "exit_signal_segment": {
+          "n": 228,
+          "win_rate": 0.2719,
+          "profit_factor": 0.2887,
+          "avg_return_pct": -0.039549,
+          "median_return_pct": -0.040996,
+          "avg_holding_days": 27.01
+        },
+        "open_positions_at_window_end": 56,
+        "n_atr_stop_exits": 818,
+        "of_atr_stop_exits_old_support_rule_would_also_fire_eventually": 174,
+        "of_atr_stop_exits_old_support_rule_never_would_fire_in_window": 644
+      }
+    },
+    "note": "固定距离ATR止损：止损线恒在entry_price下方，因此该段win_rate在数学上必然=0.0/PF=0.0(不是bug，是'止损线只能在下方触发'的定义决定的，不能跟支撑位止损段或跟踪止损段的win_rate做同口径比较)。三档multiplier的overall指标(win_rate 0.32-0.37, PF 1.56-1.69)全部低于baseline(0.4082/1.8577)——单日无需确认+止损线偏紧，导致大量原本能撑到exit_signal退出的仓位提前被止损斩断(exit_signal段win_rate被动飙升到49-68%，是幸存者偏差：能撑过ATR止损的都是走势最强的那批)，overall结果反而更差。\n移动跟踪ATR止损：其自身止损段的win_rate(0.3693-0.3949)和PF(1.30-1.67)明显好于baseline的price_stop_loss段(0.3795/0.4323)——这是真实的段内质量提升。但代价是跟踪止损'吃掉'了绝大多数交易(x1.5时1373/1407=97.6%的交易都是从跟踪止损退出，只有34笔走到exit_signal)，把原本贡献最大收益的exit_signal退出路径(baseline PF=2.24)挤压到几乎消失且质量崩坏(PF降到0.15-0.29)——相当于用'更聪明的止损'换掉了'更赚钱的正常退出'，overall PF(1.28-1.36)全面低于baseline。\n结论：机制B两种子变体，在本次测试的multiplier范围内，均不能替代现有支撑位止损。"
+  },
+  "mechanism_c_combo": {
+    "adx25_plus_atr_fixed_2.5": {
+      "overall": {
+        "n": 406,
+        "win_rate": 0.3695,
+        "profit_factor": 1.5857,
+        "avg_return_pct": 0.034662,
+        "median_return_pct": -0.039364,
+        "avg_holding_days": 38.64
+      },
+      "stop_loss_segment": {
+        "n": 107,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "avg_return_pct": -0.1298,
+        "median_return_pct": -0.110824,
+        "avg_holding_days": 14.78
+      },
+      "exit_signal_segment": {
+        "n": 299,
+        "win_rate": 0.5017,
+        "profit_factor": 3.7577,
+        "avg_return_pct": 0.093516,
+        "median_return_pct": 0.000513,
+        "avg_holding_days": 47.18
+      },
+      "open_positions_at_window_end": 32,
+      "entry_triggers": 1937,
+      "entry_allowed": 438,
+      "entry_blocked": 1499
+    },
+    "adx25_plus_atr_trailing_2.5": {
+      "overall": {
+        "n": 478,
+        "win_rate": 0.3745,
+        "profit_factor": 1.2198,
+        "avg_return_pct": 0.012077,
+        "median_return_pct": -0.035109,
+        "avg_holding_days": 26.77
+      },
+      "stop_loss_segment": {
+        "n": 385,
+        "win_rate": 0.4,
+        "profit_factor": 1.4308,
+        "avg_return_pct": 0.023911,
+        "median_return_pct": -0.033697,
+        "avg_holding_days": 26.4
+      },
+      "exit_signal_segment": {
+        "n": 93,
+        "win_rate": 0.2688,
+        "profit_factor": 0.2988,
+        "avg_return_pct": -0.036911,
+        "median_return_pct": -0.037736,
+        "avg_holding_days": 28.3
+      },
+      "open_positions_at_window_end": 26,
+      "entry_triggers": 2034,
+      "entry_allowed": 504,
+      "entry_blocked": 1530
+    },
+    "note": "两组组合(ADX>25选出的最优entry过滤 分别叠加 ATR fixed x2.5 / ATR trailing x2.5这两个机制B里overall PF最高的子变体)，overall指标(PF 1.5857/1.2198, win_rate 0.3695/0.3745)均明显低于'仅ADX>25(保留支撑位止损)'单独跑的结果(PF 2.0304, win_rate 0.4308)，也都低于baseline。说明用ATR止损替换支撑位止损，即使叠加更优质的entry过滤，依然是净负贡献——ATR止损本身的问题(机制B里发现的'过早/过度止损')不会因为entry质量提高而消失。机制C不建议采纳。"
+  },
+  "overlap_analysis": {
+    "method": "对186只股票、1年窗口内所有'position为空时触发的entry_rise'事件(=2715个)，分别标记：(a) 是否被ADX(14)>25过滤器挡下(1548个)；(b) 是否被3%支撑位缓冲过滤器挡下(pct_below_weekly_support<-3%才放行，否则挡下，1015个，公式/符号与technical_signals.check_trend_gate()完全一致)。注：本次universe是从strategy_backtest_entry_exit.json去重取出的186只股票(跟本次任务其余部分同一套universe)，跟strategy_backtest_entry_buffer_sweep.json当时用market_calibration.jsonindustries.peer_symbols(可能有股票跨多个行业重复计数)的triggers总数(1569)不是同一个分母，因此本节的buffer_blocked集合是在本次universe下重新独立计算的，不是直接复用entry_buffer_sweep.json的trades列表。",
+    "result": {
+      "total_entry_triggers": 2715,
+      "adx25_blocked_count": 1548,
+      "buffer3pct_blocked_count": 1015,
+      "blocked_by_both": 700,
+      "blocked_by_adx_only": 848,
+      "blocked_by_buffer_only": 315,
+      "blocked_by_neither": 852,
+      "jaccard_similarity": 0.3757,
+      "pct_of_adx_blocked_also_buffer_blocked": 0.4522,
+      "pct_of_buffer_blocked_also_adx_blocked": 0.6897
+    },
+    "interpretation": "Jaccard相似度=0.3757(中等重叠，不高不低)。ADX挡下的事件里有45.2%同时也被3%缓冲挡下，反过来3%缓冲挡下的事件里有69.0%同时也被ADX挡下——说明两者确实在测量相关但不同的维度：ADX测的是'当下趋势强度够不够'，支撑位缓冲测的是'价格离技术性支撑还有多少安全距离'，逻辑上不等价。848个事件(占ADX挡下总数的54.8%)是ADX独有抓到、支撑位缓冲完全放行的坏单，说明ADX确实带来了增量信息，不是支撑位过滤的另一种说法；但也不是完全独立(约1/3-1/2重叠)，两者部分冗余。这与ADX>25在psl段的真实改善(见mechanism_a)相互印证：ADX不只是在重复支撑位缓冲已经做的事，它额外挡下了848个支撑位缓冲放行、但事后被证明是坏entry的触发。"
+  },
+  "verification": {
+    "trade_level_recheck_adx": {
+      "method": "从ADX>25(判定为mechanism A最优)的438笔allowed交易里等距抽5笔，用独立的loop-based Wilder ADX(14)(wilder_adx_atr_loop()，与回测用的vectorized实现是完全不同的代码路径)在该symbol的entry_date重新计算ADX值，跟回测记录的adx14_at_entry比对，并独立确认>25。",
+      "samples": [
+        {
+          "symbol": "AAOI",
+          "entry_date": "2025-10-08",
+          "backtest_recorded_adx14_at_entry": 25.0027,
+          "independent_loop_adx14": 25.0027,
+          "diff": 0.0,
+          "passes_threshold_25_independently": true
+        },
+        {
+          "symbol": "CRM",
+          "entry_date": "2026-03-05",
+          "backtest_recorded_adx14_at_entry": 28.4489,
+          "independent_loop_adx14": 28.4489,
+          "diff": -0.0,
+          "passes_threshold_25_independently": true
+        },
+        {
+          "symbol": "INCY",
+          "entry_date": "2025-10-07",
+          "backtest_recorded_adx14_at_entry": 25.9712,
+          "independent_loop_adx14": 25.9712,
+          "diff": -0.0,
+          "passes_threshold_25_independently": true
+        },
+        {
+          "symbol": "NOW",
+          "entry_date": "2026-03-03",
+          "backtest_recorded_adx14_at_entry": 33.9296,
+          "independent_loop_adx14": 33.9296,
+          "diff": -0.0,
+          "passes_threshold_25_independently": true
+        },
+        {
+          "symbol": "SNAP",
+          "entry_date": "2025-09-29",
+          "backtest_recorded_adx14_at_entry": 29.9085,
+          "independent_loop_adx14": 29.9085,
+          "diff": -0.0,
+          "passes_threshold_25_independently": true
+        }
+      ],
+      "result": "5/5全部通过，diff=0.0000，且5笔都独立确认ADX(14)>25。"
+    },
+    "trade_level_recheck_atr": {
+      "method": "从ATR fixed x2.5('机制B里overall PF最高'的候选)的210笔atr_stop_fixed退出交易里等距抽5笔，用loop-based Wilder ATR(14)在entry_date独立重算ATR值，跟回测记录的atr14_at_entry比对；并用entry_price-ATR×2.5独立重建止损线，确认exit_price确实低于这条独立重建的止损线。",
+      "samples": [
+        {
+          "symbol": "AAPL",
+          "entry_date": "2026-02-04",
+          "exit_date": "2026-02-13",
+          "backtest_recorded_atr14_at_entry": 6.0409,
+          "independent_loop_atr14_at_entry": 6.0409,
+          "diff": -0.0,
+          "backtest_recorded_stop_line": 260.6371,
+          "independently_recomputed_stop_line": 260.6371,
+          "exit_price": 255.32435607910156,
+          "exit_price_below_stop_line_independently_confirmed": true
+        },
+        {
+          "symbol": "CRWD",
+          "entry_date": "2026-08-07",
+          "exit_date": "2026-08-20",
+          "backtest_recorded_atr14_at_entry": 9.5311,
+          "independent_loop_atr14_at_entry": 9.5311,
+          "diff": -0.0,
+          "backtest_recorded_stop_line": 190.5922,
+          "independently_recomputed_stop_line": 190.5922,
+          "exit_price": 190.33999633789065,
+          "exit_price_below_stop_line_independently_confirmed": true
+        },
+        {
+          "symbol": "IFF",
+          "entry_date": "2026-05-08",
+          "exit_date": "2026-05-15",
+          "backtest_recorded_atr14_at_entry": 2.9639,
+          "independent_loop_atr14_at_entry": 2.9639,
+          "diff": -0.0,
+          "backtest_recorded_stop_line": 73.2139,
+          "independently_recomputed_stop_line": 73.2139,
+          "exit_price": 72.71551513671875,
+          "exit_price_below_stop_line_independently_confirmed": true
+        },
+        {
+          "symbol": "NEU",
+          "entry_date": "2025-11-10",
+          "exit_date": "2025-12-16",
+          "backtest_recorded_atr14_at_entry": 20.9463,
+          "independent_loop_atr14_at_entry": 20.9463,
+          "diff": -0.0,
+          "backtest_recorded_stop_line": 716.6692,
+          "independently_recomputed_stop_line": 716.6692,
+          "exit_price": 710.1680908203125,
+          "exit_price_below_stop_line_independently_confirmed": true
+        },
+        {
+          "symbol": "SNAP",
+          "entry_date": "2026-03-04",
+          "exit_date": "2026-03-12",
+          "backtest_recorded_atr14_at_entry": 0.2735,
+          "independent_loop_atr14_at_entry": 0.2735,
+          "diff": -0.0,
+          "backtest_recorded_stop_line": 4.6861,
+          "independently_recomputed_stop_line": 4.6861,
+          "exit_price": 4.650000095367432,
+          "exit_price_below_stop_line_independently_confirmed": true
+        }
+      ],
+      "result": "5/5全部通过，ATR diff=0.0000，止损线独立重建后与回测记录完全一致，且5笔exit_price都独立确认低于止损线。"
+    },
+    "tolerance": "0.0001(实际全部0.0000精确匹配)"
+  },
+  "comparison_table": [
+    {
+      "variant": "baseline (live risk_rules.json: support stop-loss 3%/5day, no ADX/ATR)",
+      "total_trades": 1117,
+      "overall_win_rate": 0.4082,
+      "overall_profit_factor": 1.8577,
+      "overall_median_return_pct": -0.010067,
+      "stop_segment_n": 469,
+      "stop_segment_win_rate": 0.3795,
+      "stop_segment_profit_factor": 0.4323
+    },
+    {
+      "variant": "mechanism_A: ADX(14) > 20 entry filter",
+      "total_trades": 674,
+      "overall_win_rate": 0.4154,
+      "overall_profit_factor": 1.7598,
+      "overall_median_return_pct": -0.01101,
+      "stop_segment_n": 232,
+      "stop_segment_win_rate": 0.4138,
+      "stop_segment_profit_factor": 0.4798,
+      "entry_triggers": 1766,
+      "entry_allowed": 717,
+      "entry_blocked_by_adx": 1049
+    },
+    {
+      "variant": "mechanism_A: ADX(14) > 25 entry filter",
+      "total_trades": 448,
+      "overall_win_rate": 0.4308,
+      "overall_profit_factor": 2.0304,
+      "overall_median_return_pct": -0.010446,
+      "stop_segment_n": 128,
+      "stop_segment_win_rate": 0.4453,
+      "stop_segment_profit_factor": 0.4628,
+      "entry_triggers": 2028,
+      "entry_allowed": 480,
+      "entry_blocked_by_adx": 1548
+    },
+    {
+      "variant": "mechanism_A: ADX(14) > 30 entry filter",
+      "total_trades": 281,
+      "overall_win_rate": 0.4342,
+      "overall_profit_factor": 2.0727,
+      "overall_median_return_pct": -0.009504,
+      "stop_segment_n": 64,
+      "stop_segment_win_rate": 0.375,
+      "stop_segment_profit_factor": 0.3727,
+      "entry_triggers": 2246,
+      "entry_allowed": 305,
+      "entry_blocked_by_adx": 1941
+    },
+    {
+      "variant": "mechanism_A: ADX(14) > 35 entry filter",
+      "total_trades": 176,
+      "overall_win_rate": 0.4091,
+      "overall_profit_factor": 2.2857,
+      "overall_median_return_pct": -0.010446,
+      "stop_segment_n": 26,
+      "stop_segment_win_rate": 0.3077,
+      "stop_segment_profit_factor": 0.2891,
+      "entry_triggers": 2389,
+      "entry_allowed": 190,
+      "entry_blocked_by_adx": 2199
+    },
+    {
+      "variant": "mechanism_B: ATR(14) fixed x1.5 stop (replaces support stop-loss)",
+      "total_trades": 949,
+      "overall_win_rate": 0.3182,
+      "overall_profit_factor": 1.561,
+      "overall_median_return_pct": -0.045485,
+      "stop_segment_n": 506,
+      "stop_segment_win_rate": 0.0,
+      "stop_segment_profit_factor": 0.0,
+      "note": "fixed-distance ATR stop segment win_rate is tautologically 0.0 (stop line is always below entry price by construction) — not comparable 1:1 to the support-stop or trailing-stop segment win_rate."
+    },
+    {
+      "variant": "mechanism_B: ATR(14) fixed x2.0 stop (replaces support stop-loss)",
+      "total_trades": 886,
+      "overall_win_rate": 0.3454,
+      "overall_profit_factor": 1.5926,
+      "overall_median_return_pct": -0.046976,
+      "stop_segment_n": 339,
+      "stop_segment_win_rate": 0.0,
+      "stop_segment_profit_factor": 0.0,
+      "note": "fixed-distance ATR stop segment win_rate is tautologically 0.0 (stop line is always below entry price by construction) — not comparable 1:1 to the support-stop or trailing-stop segment win_rate."
+    },
+    {
+      "variant": "mechanism_B: ATR(14) fixed x2.5 stop (replaces support stop-loss)",
+      "total_trades": 845,
+      "overall_win_rate": 0.3669,
+      "overall_profit_factor": 1.6929,
+      "overall_median_return_pct": -0.043478,
+      "stop_segment_n": 210,
+      "stop_segment_win_rate": 0.0,
+      "stop_segment_profit_factor": 0.0,
+      "note": "fixed-distance ATR stop segment win_rate is tautologically 0.0 (stop line is always below entry price by construction) — not comparable 1:1 to the support-stop or trailing-stop segment win_rate."
+    },
+    {
+      "variant": "mechanism_B: ATR(14) trailing x1.5 stop (replaces support stop-loss)",
+      "total_trades": 1407,
+      "overall_win_rate": 0.3639,
+      "overall_profit_factor": 1.2759,
+      "overall_median_return_pct": -0.028013,
+      "stop_segment_n": 1373,
+      "stop_segment_win_rate": 0.3693,
+      "stop_segment_profit_factor": 1.3038,
+      "note": null
+    },
+    {
+      "variant": "mechanism_B: ATR(14) trailing x2.0 stop (replaces support stop-loss)",
+      "total_trades": 1187,
+      "overall_win_rate": 0.3724,
+      "overall_profit_factor": 1.3156,
+      "overall_median_return_pct": -0.030643,
+      "stop_segment_n": 1070,
+      "stop_segment_win_rate": 0.3916,
+      "stop_segment_profit_factor": 1.4534,
+      "note": null
+    },
+    {
+      "variant": "mechanism_B: ATR(14) trailing x2.5 stop (replaces support stop-loss)",
+      "total_trades": 1046,
+      "overall_win_rate": 0.3681,
+      "overall_profit_factor": 1.3614,
+      "overall_median_return_pct": -0.034232,
+      "stop_segment_n": 818,
+      "stop_segment_win_rate": 0.3949,
+      "stop_segment_profit_factor": 1.6689,
+      "note": null
+    },
+    {
+      "variant": "mechanism_C: ADX(14)>25 + ATR fixed x2.5 combo",
+      "total_trades": 406,
+      "overall_win_rate": 0.3695,
+      "overall_profit_factor": 1.5857,
+      "overall_median_return_pct": -0.039364,
+      "stop_segment_n": 107,
+      "stop_segment_win_rate": 0.0,
+      "stop_segment_profit_factor": 0.0
+    },
+    {
+      "variant": "mechanism_C: ADX(14)>25 + ATR trailing x2.5 combo",
+      "total_trades": 478,
+      "overall_win_rate": 0.3745,
+      "overall_profit_factor": 1.2198,
+      "overall_median_return_pct": -0.035109,
+      "stop_segment_n": 385,
+      "stop_segment_win_rate": 0.4,
+      "stop_segment_profit_factor": 1.4308
+    }
+  ],
+  "key_finding": "机制A(ADX过滤)：ADX(14)>25是本次测试里唯一对price_stop_loss段产生真实(非虚假)改善的参数——win_rate从baseline的37.95%提升到44.53%，PF从0.4323提升到0.4628，且样本量(n=128)远高于15笔的最低可信线，不是'砍到几乎不发生'的假改善(跟entry_buffer_sweep.json里3%/5%/8%/10%缓冲过滤把psl段砍到个位数、胜率仍是0%的情况明显不同)。overall指标同步改善(win_rate 40.82%→43.08%, PF 1.8577→2.0304)。但ADX>25仍不是'解药'：过滤后的price_stop_loss段PF依然是0.4628<1，仍是净亏损段，只是亏得比baseline轻；且entry_allowed只有480/2028(76%的entry机会被挡掉)，交易频率大幅下降。ADX>30/35虽然overall指标看起来更亮眼，但psl段本身(0.375/0.3077 win_rate，均差于baseline)在恶化——这是样本被压缩、整体质量筛选效应掩盖了'止损段本身没被修好'的又一次例证。\n\n机制B(ATR止损)：固定距离和移动跟踪两种子变体，在1.5/2.0/2.5三档multiplier下，overall指标全部劣于baseline的支撑位止损。固定距离止损因为'单日无确认+止损线偏紧'，把大量本该盈利离场的仓位提前斩断；移动跟踪止损虽然自身止损段质量(win_rate/PF)明显好于baseline的price_stop_loss段，但代价是几乎吞掉了全部交易流(x1.5时97.6%的交易走跟踪止损退出)，挤压掉baseline里最赚钱的exit_signal退出路径，净效果是overall变差。两种ATR止损都不能替代现有支撑位止损机制。\n\n机制C(组合)：ADX>25 + ATR止损(固定或跟踪x2.5)的组合，overall指标全部劣于'仅ADX>25、保留支撑位止损'单独测试的结果，也劣于baseline。ATR止损的负面效应不会因为entry质量提升而消失，组合没有价值。\n\n重叠分析：ADX过滤与3%支撑位缓冲过滤的Jaccard相似度0.3757(中等)，约45-69%互相重叠区间，但ADX独有挡下的坏entry有848个(占其挡下总数的54.8%)——说明ADX确实提供了支撑位缓冲衡量不到的增量信息(趋势强度维度)，不是同一件事的另一种说法。",
+  "recommendation": "1) 建议把ADX(14)>25作为一条新的entry过滤规则纳入风控测试通道，理由：这是本次+之前entry_buffer_sweep.json测试过的所有entry侧过滤规则里，唯一一个真实、非虚假地改善了price_stop_loss段本身质量(不是靠砍样本量制造错觉)的参数，且保留了足够样本量(n=128)支撑这个判断。但在正式写入risk_rules.json live配置前，还需要：(a) 确认76%的entry拒绝率在实盘场景下是否会导致机会成本过高/持仓过于稀疏(本次只测了纯策略回测，没有跟execution_pacing/max_concurrent_positions等其他live约束联合测试)；(b) 用更长历史或滚动窗口重新验证，因为128笔仍然是单一1年窗口的结果，样本时期集中；(c) 明确认识到即使采纳，price_stop_loss段本身依然是PF<1的净亏损段，ADX过滤只是'减轻'不是'治愈'——risk_rules.json里trend_gate._comment记录的'entry信号不检查长周期支撑位置'这个根因依然没有被解决。\n2) 不建议采纳机制B(ATR自适应止损)的任何一个子变体或multiplier——固定距离和移动跟踪两种ATR止损，在测试的全部multiplier范围内，均未能在overall或price_stop_loss段(可比口径下)上跑赢现有的周线支撑位止损机制。\n3) 不建议采纳机制C(ADX+ATR组合)——两组组合测试的overall指标都劣于'仅用ADX过滤、保留原有支撑位止损'，说明ATR止损的负面效应是结构性的，不会被更优质的entry筛选抵消。\n4) 如果只能二选一采纳一个改动，选ADX(14)>25 entry过滤，不选ATR止损替换——但要清楚这依然是'部分缓解'而非'解决'，且需要在更贴近live约束的联合测试下二次验证后才建议真正写入risk_rules.json。"
+}

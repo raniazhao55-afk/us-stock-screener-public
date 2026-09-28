@@ -1,0 +1,157 @@
+{
+  "built_date": "2026-09-09",
+  "purpose": "补测上一轮strategy_backtest_chande_kroll_and_swing_pivot.json未完成的两件事：(1)用现在(2026-09-09)已恢复正常的数据源精确复现strategy_backtest_diagnostics.json的hypothesis_2.variant_3pct_5day基线；(2)给摆动支撑位(swing pivot support, order=3/n_pivots=3)加回看时间上限(104周/156周)，检验上一轮发现的FXHO/BOXL数据污染问题是否消失、改善在精确基线和5年窗口下是否持续、以及'更早触发'vs'定位更准'两种效应能否拆解。",
+
+  "precondition_baseline_reproduction_refreshed": {
+    "requirement": "复现strategy_backtest_diagnostics.json的hypothesis_2_stop_loss_parameter_sweep.variant_3pct_5day：overall n=1117/win_rate=0.4091/PF=1.8578；price_stop_loss_segment n=469/win_rate=0.3817/PF=0.4327，容差要小(笔数完全一致，win_rate/PF小数点后至少3位一致)。",
+    "root_cause_of_prior_round_gap_corrected": "上一轮报告把~1%的偏差归因于'Yahoo Finance当前对2026-09-08返回损坏(全NaN)数据，外部问题现在无法解决'。本轮排查发现真正的根因不是这个，而是本仓库自己的OHLCV缓存逻辑里一个此前未被记录的bug：lib/stockstats_utils.py的load_ohlcv()把缓存文件名和'今天(today_date=pd.Timestamp.today())'绑定，而_needs_same_day_refresh()只在curr_date_dt.date() >= today_date.date()时才会因TTL过期而重新拉取——一旦curr_date(本例中固定是回测目标日2026-09-08)比服务器的'今天'早一天，这个缓存文件就永远不会再被刷新，哪怕它当初碰巧是在Yahoo Finance短暂抖动、返回NaN的那个时间窗口内抓取的。实测证据：(1)独立用yf.download()绕过本仓库缓存，直接查询AAPL 2026-09-01~2026-09-10，当前返回的2026-09-08行是正常OHLCV(Close=316.22)，确认Yahoo Finance本身现在没有问题；(2)检查本仓库.cache目录下186个symbol'今天(2026-09-09)对应日期区间'的缓存CSV文件(文件名形如{symbol}-YFin-data-2021-09-09-2026-09-10.csv，构建于当天凌晨01:07)，186/186个symbol的2026-09-08那一行Open/High/Low/Close全部是空值(只有Volume有值)——这是系统性的、覆盖全部186个symbol的同一份污染快照，不是随机的per-symbol网络问题；(3)同一天(2026-09-08)稍早22:25构建的另一份缓存文件(文件名区间不同，因为它是在'今天'还是09-08时构建的)里，同一行Sept 8数据是完全正常的(Close=316.22，与刚才独立验证的实时值完全一致)——证明Yahoo Finance当天的数据本身時有時無(抖动)，问题出在'哪次抖动恰好被写进了缓存、而缓存又因为curr_date已经'过去'而被这套逻辑永久锁定'，不是Yahoo Finance数据源持续性损坏。",
+    "fix_applied_for_this_task": "删除本仓库.cache目录下186只股票'今天'对应的缓存CSV(186/186个文件全部命中并删除)，强制load_ohlcv()对这186只股票重新从yfinance拉取。重新拉取后再次检查，186/186个symbol的2026-09-08行现在都是正常OHLCV，不再有NaN。此修复只删除了缓存文件(会被自动重新拉取补齐)，未修改任何生产代码，符合'只commit新增的这一个JSON文件'的要求；下面'infra_finding_not_fixed_in_this_task'记录了这个缓存bug本身，留给后续任务视情况修复。",
+    "reproduction_result_after_cache_refresh": {
+      "overall": {"n": 1117, "win_rate": 0.4082, "profit_factor": 1.8577, "avg_return_pct": 0.033239, "median_return_pct": -0.010067, "avg_holding_days": 25.85},
+      "price_stop_loss_segment": {"n": 469, "win_rate": 0.3795, "profit_factor": 0.4323, "avg_return_pct": -0.011169, "median_return_pct": -0.006235, "avg_holding_days": 2.68},
+      "exit_signal_segment": {"n": 648, "win_rate": 0.429, "profit_factor": 2.2438, "avg_return_pct": 0.06538, "median_return_pct": -0.026461, "avg_holding_days": 42.63},
+      "open_positions_at_window_end": 68,
+      "method": "与上一轮完全相同的方法(未改动)：186只股票取自strategy_backtest_entry_exit.json的industries.*.trades[].symbol去重程序化提取；entry_rise/exit_rise取自_prepared_df()的rising edge；止损逐(symbol,交易日)真实调用check_trend_gate(price_stop_loss_pct_below_support=0.03, price_stop_loss_confirm_days=5)（生产函数直接调用，非向量化近似）；窗口=该symbol最后交易日往前推365日历天。"
+    },
+    "gap_vs_committed_target": {
+      "n_match": "笔数在overall(1117)/price_stop_loss_segment(469)/exit_signal_segment(648)/open_positions(68)四个层级上与committed diagnostics.json目标值完全一致，这是本轮相对上一轮(overall n=1128 vs 1117，+11笔的偏差)最核心的改善——证实缓存bug才是根因，缓存修复后连'笔数'这个最粗的指标都精确复现了。",
+      "metric_residual": "win_rate/PF存在极小残差，未完全达到'小数点后至少3位'的严格要求：overall win_rate 0.4082 vs 目标0.4091(相差0.0009)，profit_factor 1.8577 vs 1.8578(相差0.0001，3位内一致)；price_stop_loss_segment win_rate 0.3795 vs 目标0.3817(相差0.0022)，profit_factor 0.4323 vs 0.4327(相差0.0004，第3位边界)。avg_return_pct/median_return_pct/avg_holding_days在全部三个分段上都与目标值一致到小数点后4-6位。",
+      "residual_diagnosis": "残差量级(overall差0.0009≈1/1117，止损段差0.0022≈1/469)与'恰好1笔交易的win/loss判定翻转'高度吻合(1/1117=0.000895，1/469=0.002132，与观测差几乎完全对应)，而不是系统性偏移。检查本次止损段469笔交易里return_pct绝对值最小的几笔，发现CRCT(2026-02-18→2026-02-19)和PINS(2026-04-16→2026-04-17)两笔交易的entry_price与exit_price完全相等(4.535=4.535、20.12=20.12)，return_pct恰好为0.0——按aggregate()的win=return>0/loss=return<=0口径，这类恰好持平的交易被计入loss，只要原始committed快照里同一笔交易的价格因为yfinance重新抓取时的浮点级别差异(auto_adjust复权重算、或该symbol当天极小的价格修订)略微偏向正的一侧，就会翻转成win，单独就能解释上述残差量级。这与strategy_backtest_diagnostics.json自己文档化的baseline_3pct_3day验证结论('差异量级符合1-2笔临界(return_pct接近0)交易因浮点精度差异发生win/loss边界翻转的正常范围')完全一致，且比上一轮的11笔/1%量级偏差好了一个数量级。原始committed diagnostics.json只保存聚合数字、未保存逐笔trade明细，因此无法逐笔核对原始文件里CRCT/PINS这两笔的真实return_pct符号来100%坐实这个解释，如实说明这一点：残差已缩小到'大概率是1笔临界交易翻转'的量级并给出了具体嫌疑交易，但未能做到逐笔100%对账。"
+    },
+    "decision": "本次复现在'笔数'层面做到了精确复现(四个层级全部相等)，在'win_rate/PF'层面达到了'差距0.1-0.2个百分点、可追溯到具体1笔临界交易'的水平，比上一轮'差距~1%、原因笼统归为外部数据源'有实质性改善，且给出了明确、可验证的根因(本仓库缓存逻辑对curr_date早于today的请求不会重新拉取，而不是Yahoo Finance持续性损坏)。后续Task 2的所有实验都建立在这个刷新后的、笔数精确复现的186symbol/1年窗口基线之上，不是上一轮ration~1%漂移的近似基线。"
+  },
+
+  "infra_finding_not_fixed_in_this_task": "本轮发现的缓存bug(_needs_same_day_refresh()对curr_date_dt.date() < today_date.date()的请求永远不重新拉取，哪怕缓存内容是当天早些时候一次不稳定抓取写入的坏数据)是lib/stockstats_utils.py里一个通用的、影响所有'用过去某天作为curr_date跑回测'场景的稳健性缺陷，不是本次任务引入或本次要修的问题。按任务要求'只commit这一个新文件'，本轮没有修改stockstats_utils.py本身，只是删除+强制重新拉取了本任务需要的186个symbol的缓存文件。建议后续单独立项修复：例如改成基于内容(是否存在NaN行)而非仅基于curr_date与today的大小关系来判断是否需要重新拉取，或给同一symbol保留短期内的多次抓取快照用于交叉校验。",
+
+  "methodology_note_lookback_capped_swing_pivot": {
+    "fallback_rule_design": "support_level_capped(t) = max( swing_pivot_component(t), baseline_support(t) )，其中baseline_support(t) = check_trend_gate()自己的公式(max(26周摆动低点, 30周均线))，逐日计算，作为任何情况下都不缺失的兜底下限；swing_pivot_component(t)是'最近至多n_pivots个、在day t已因果确认、且距离day t不超过max_lookback_weeks周'的摆动低点中的最高者——如果确认窗口内一个符合条件的摆动点都没有，这一项就是缺失(不参与max，直接退化为纯baseline_support)；如果有1个或2个(不足n_pivots个)符合条件的点，直接用这些点(不再像未加上限的旧版本那样要求必须凑满n_pivots否则整体判NaN)。取两者(swing分量、baseline分量)中更高的一个，这样support_level永远有定义、不会因为回看上限内摆动点不足而失效或跳到异常值。",
+    "why_take_the_max": "支撑位越高，×97%后的止损阈值越高，价格需要跌破的门槛更容易被触发——'取更高者'是更保守(更容易触发止损、更早离场)的选择，与baseline公式本身'26周摆动低点与30周均线取更高者'的既有惯例(同样是取更保守的一侧)保持一致的设计哲学，不是本次新发明的偏好。",
+    "caps_tested": "104周(2年，上一轮报告建议的具体数字)和156周(3年)，order=3/n_pivots=3(上一轮6组参数里综合表现最好的一组)。",
+    "implementation": "在scratchpad/ck_swing/task2/core.py里新写support_level_capped()，复用上一轮已通过5点手算验证的mechanisms.py的weekly_swing_lows()(局部极小值+周索引计算逻辑不变)，只新增了'w-p<=max_lookback_weeks'这一个额外过滤条件，并去掉了旧版本'不足n_pivots个确认点就整体判NaN'的限制。baseline_support(t)的向量化实现是strategy_backtest_pattern_signals_extended.json/strategy_backtest_double_bottom_refreshed.json那一轮(pattern_extended_backtest.py)已经使用过的compute_price_stop_loss_state()逻辑的移植版本，本轮又重新用真实check_trend_gate()在8个(symbol,date)点位上做了独立校验(见verification)。"
+  },
+
+  "mechanism_1yr_window": {
+    "note": "104周和156周两档回看上限在本次186symbol/1年窗口测试里给出完全相同的聚合结果(逐笔trade列表也完全相同)——已确认不是bug：186只股票在此窗口内没有任何一笔交易的'最近n_pivots=3个确认摆动低点'集合会因为把回看范围从104周放宽到156周而发生变化(要么所需的摆动点都在104周以内就已经找齐，要么FXHO/BOXL式的污染读数本身就落在104周以内、放宽到156周也不会排除它，见下方FXHO/BOXL小节)。",
+    "baseline_precisely_reproduced": {"overall": {"n": 1117, "win_rate": 0.4082, "profit_factor": 1.8577, "avg_return_pct": 0.033239, "avg_holding_days": 25.85}, "price_stop_loss_segment": {"n": 469, "win_rate": 0.3795, "profit_factor": 0.4323, "avg_return_pct": -0.011169, "avg_holding_days": 2.68}},
+    "cap_104wk": {
+      "overall": {"n": 1183, "win_rate": 0.4235, "profit_factor": 1.8867, "avg_return_pct": 0.031813, "median_return_pct": -0.007458, "avg_holding_days": 23.67},
+      "price_stop_loss_segment": {"n": 564, "win_rate": 0.4149, "profit_factor": 0.5901, "avg_return_pct": -0.00741, "median_return_pct": -0.003772, "avg_holding_days": 2.4},
+      "exit_signal_segment": {"n": 619, "win_rate": 0.4313, "profit_factor": 2.2968, "avg_return_pct": 0.067552, "median_return_pct": -0.025594, "avg_holding_days": 43.05},
+      "open_positions_at_window_end": 65
+    },
+    "cap_156wk": {
+      "overall": {"n": 1183, "win_rate": 0.4235, "profit_factor": 1.8867, "avg_return_pct": 0.031813, "median_return_pct": -0.007458, "avg_holding_days": 23.67},
+      "price_stop_loss_segment": {"n": 564, "win_rate": 0.4149, "profit_factor": 0.5901, "avg_return_pct": -0.00741, "median_return_pct": -0.003772, "avg_holding_days": 2.4},
+      "exit_signal_segment": {"n": 619, "win_rate": 0.4313, "profit_factor": 2.2968, "avg_return_pct": 0.067552, "median_return_pct": -0.025594, "avg_holding_days": 43.05},
+      "open_positions_at_window_end": 65
+    },
+    "improvement_vs_precisely_reproduced_baseline": "止损段win_rate 37.95%→41.49%(+3.54pp)，profit_factor 0.4323→0.5901(+0.158)，avg_return -1.12%→-0.74%；样本量543→564没有塌缩，反而略多。改善方向和量级与上一轮(在~1%漂移基线上做的测试：38.00%→42.91%，PF 0.438→0.6098)基本一致，确认改善在精确复现的新基线上依然成立，不是上一轮基线偏差造成的假象。",
+    "robustness_excl_boxl_fxho": {
+      "price_stop_loss_segment": {"n": 555, "win_rate": 0.4198, "profit_factor": 0.6153, "avg_return_pct": -0.006612},
+      "conclusion": "剔除BOXL/FXHO后改善略微更好(win_rate 41.49%→41.98%，PF 0.5901→0.6153)，与上一轮结论一致：改善不是这2只问题标的造出来的假象。"
+    }
+  },
+
+  "fxho_boxl_before_after": {
+    "method": "直接抽取上一轮报告(strategy_backtest_chande_kroll_and_swing_pivot.json的mechanism_e_swing_pivot_support.variants.order3_n3和data_quality_finding_boxl_fxho)里点名的具体问题日期，用本轮'加了104周/156周回看上限'的support_level_capped()重新计算同一批(symbol, date)的support_level，与旧的(无回看上限的)swing pivot support数值逐一对比。",
+    "result_table": [
+      {"symbol": "BOXL", "date": "2026-02-10(对应trade的trigger date)", "old_uncapped_swing_support": 63.0, "new_capped_104wk": 63.0, "new_capped_156wk": 63.0, "baseline_support_same_date": 44.35, "anomaly_resolved": false},
+      {"symbol": "BOXL", "date": "2026-04-08", "old_uncapped_swing_support": 56.16, "new_capped_104wk": 56.16, "new_capped_156wk": 56.16, "anomaly_resolved": false},
+      {"symbol": "BOXL", "date": "2026-07-07", "old_uncapped_swing_support": 27.36, "new_capped_104wk": 27.36, "new_capped_156wk": 27.36, "anomaly_resolved": "n/a(该点位本身已不再异常，加不加上限都一样)"},
+      {"symbol": "BOXL", "date": "2026-07-13", "old_uncapped_swing_support": 7.38, "new_capped_104wk": 7.38, "new_capped_156wk": 7.38, "anomaly_resolved": "n/a(同上)"},
+      {"symbol": "FXHO", "date": "2025-09-10", "old_uncapped_swing_support": 13550.0, "new_capped_104wk": 13550.0, "new_capped_156wk": 13550.0, "baseline_support_same_date": "未单独取(该日期在数据集早期，baseline本身也部分处于污染年代，见下方caveat)", "anomaly_resolved": false},
+      {"symbol": "FXHO", "date": "2026-06-04", "old_uncapped_swing_support": 4455.0, "new_capped_104wk": 4455.0, "new_capped_156wk": 4455.0, "baseline_support_same_date": 33.79, "anomaly_resolved": false},
+      {"symbol": "FXHO", "date": "2026-07-08", "old_uncapped_swing_support": 31.75, "new_capped_104wk": 31.75, "new_capped_156wk": 31.75, "anomaly_resolved": "n/a(该点位本身已不再异常)"},
+      {"symbol": "FXHO", "date": "2026-07-15", "old_uncapped_swing_support": 27.3, "new_capped_104wk": 27.3, "new_capped_156wk": 27.3, "anomaly_resolved": "n/a(同上)"}
+    ],
+    "key_finding_negative": "两档回看上限(104周/156周)都没有让FXHO/BOXL已确认异常的支撑位数值发生任何变化——不是验证脚本的bug(已用独立第二套手算代码逐点复核，见verification)，而是一个真实的、比上一轮假设更悲观的发现：追查FXHO在2026-06-04这一天'已确认摆动低点'的完整列表后发现，其价格异常不是集中在2021年那一次性的历史断点(那批2021-2023年的天文数字读数确实已经被104/156周上限成功排除在'已确认'候选集之外)，而是一个从2021年到2025年底持续存在的、逐步衰减的未复权/分批未回溯拆股序列——直到2025-12-26附近才'追上'合理价位。这意味着截至2026-06-04这个交易日为止，最近3个已确认摆动低点里仍然包含2025-08-29这个'尚未修正、收盘价仍高达4455'的点(距当日仅40周，同时在104周和156周两档上限之内)，取max()后自然仍然选中这个坏值。BOXL的情况完全一致(2026-02-10当天最近3个已确认摆动低点里最新的仍然是2025-06-27的63.0，仅33周之遥，同样在两档上限之内)。要真正排除这两个具体案例的污染，回看上限需要短到~30-40周(半年多)左右——这已经和baseline自己26-30周的窗口量级相当，会让'比baseline看得更远'这个swing pivot机制原本想保留的结构性优势基本消失，本轮测试的104周/156周这两档任务指定的数字并不足以解决FXHO/BOXL问题，属于如实报告的不利发现，不做美化。",
+    "why_max_floor_does_not_help_here": "'取swing分量和baseline分量中更高者'这个兜底规则，只在swing分量缺失(NaN，即回看窗口内一个确认摆动点都没有)时才会退化成纯baseline——但FXHO/BOXL这两个案例里，回看窗口内是'有'确认摆动点的，只是这些点本身的价格数值是坏的(未复权污染)，取max()之后坏的swing分量(4455、63.0)必然压过正常的baseline分量(33.79、44.35)，兜底规则对这种'存在但错误'的输入没有防护作用，只对'不存在'的输入有防护作用——这是本次任务设计的兜底规则一个此前没有被特别指出的局限，如实记录。"
+  },
+
+  "five_year_robustness_extension": {
+    "method": "参照strategy_backtest_double_bottom_refreshed.json那一轮'扩展到5年窗口，symbol历史不足5年就用全部可用历史'的做法：186个symbol里161个(86.6%)有≈5年完整历史可用，其余是历史更短的次新股(最短0.32年)，窗口起点用argmax(dates>=cutoff)确定，不足5年的直接用全部可用历史，不报错也不跳过。baseline与cap_104/cap_156用完全相同的入场/出场规则和窗口边界，三者唯一区别仍然只是止损支撑位定义。",
+    "results": {
+      "baseline": {"overall": {"n": 4786, "win_rate": 0.4106, "profit_factor": 1.6392, "avg_return_pct": 0.027907, "avg_holding_days": 30.95}, "price_stop_loss_segment": {"n": 1240, "win_rate": 0.3863, "profit_factor": 0.4162, "avg_return_pct": -0.011909, "avg_holding_days": 2.99}, "exit_signal_segment": {"n": 3546, "win_rate": 0.4191, "profit_factor": 1.8077}, "open_positions_at_window_end": 68},
+      "cap_104wk": {"overall": {"n": 4997, "win_rate": 0.4195, "profit_factor": 1.631, "avg_return_pct": 0.02606, "avg_holding_days": 28.91}, "price_stop_loss_segment": {"n": 1555, "win_rate": 0.4206, "profit_factor": 0.5515, "avg_return_pct": -0.008062, "avg_holding_days": 2.63}, "exit_signal_segment": {"n": 3442, "win_rate": 0.4189, "profit_factor": 1.8002}, "open_positions_at_window_end": 65},
+      "cap_156wk": {"overall": {"n": 4997, "win_rate": 0.4195, "profit_factor": 1.631, "avg_return_pct": 0.02606, "avg_holding_days": 28.91}, "price_stop_loss_segment": {"n": 1555, "win_rate": 0.4206, "profit_factor": 0.5515, "avg_return_pct": -0.008062, "avg_holding_days": 2.63}, "exit_signal_segment": {"n": 3442, "win_rate": 0.4189, "profit_factor": 1.8002}, "open_positions_at_window_end": 65},
+      "cap_104wk_excl_boxl_fxho": {"price_stop_loss_segment": {"n": 1523, "win_rate": 0.4235, "profit_factor": 0.56, "avg_return_pct": -0.007692}},
+      "baseline_excl_boxl_fxho": {"price_stop_loss_segment": {"n": 1209, "win_rate": 0.3896, "profit_factor": 0.4188, "avg_return_pct": -0.01151}}
+    },
+    "conclusion": "5年窗口(样本量放大到止损段1240→1555笔)下改善方向和量级与1年窗口高度一致，不是1年窗口的偶然结果：止损段win_rate 38.63%→42.06%(+3.43pp，1年窗口是+3.54pp)，profit_factor 0.4162→0.5515(+0.135，1年窗口是+0.158)。剔除BOXL/FXHO后改善同样保持甚至略强(38.96%→42.35%)。104周与156周两档在5年窗口下同样给出完全相同的聚合结果，与1年窗口的观察一致，进一步确认这两档回看上限在186个symbol的实际数据分布下是等价的，不是1年窗口样本太小造成的巧合。5年窗口下FXHO/BOXL的止损交易明细里出现了比1年窗口更极端的污染读数(如FXHO在2024-02/2025-01附近的support_level被算出338,750~601,250)——这些交易发生在FXHO自身原始收盘价当时确实是天文数字级(未复权)的年代，此时baseline公式自己也会读到同样污染的原始收盘价(26周窗口同样落在污染区间内)，因此不是swing pivot相对baseline的'额外'劣势，而是这两只标的原始数据本身在那些年份不可用的问题，两种机制在那些具体日期都不可信，已在下方recommendation里一并说明。"
+  },
+
+  "trigger_decomposition_earlier_vs_positioning": {
+    "approach": "对order3_n3+cap104wk/cap156wk(1年窗口)全部止损段交易，用每笔交易实际的entry_date/entry_price，独立地(不依赖baseline自己的模拟交易序列)逐日往前走查baseline_support_series()算出的baseline_state数组和相同的exit_rise数组，找到'如果这笔仓位改用baseline公式持有，会在哪一天以什么方式(price_stop_loss或exit_signal)离场'，与该笔交易在swing_pivot_capped下的实际离场日对比。",
+    "mathematical_property_used": "support_level_capped(t) = max(swing_component(t), baseline_support(t))对每个t恒成立，且止损阈值(×97%)和5天确认规则对support_level都是单调递增的，因此capped_stop_state(t)为真时，不能推出baseline_stop_state(t)也为真，但反过来baseline_stop_state(t)为真时，capped_stop_state(t)必然也为真(同一天或更早)——即capped机制永远不会比baseline自己的公式更晚触发同一笔仓位的止损，只会同天或更早。这个数学性质用750个(symbol, 交易日)组合做了实证核查，0个反例(monotonicity_check.violations=0)，证实了推导，不只是理论假设。",
+    "category_breakdown_n564_stop_loss_trades": {
+      "same_day_as_baseline_hypothetical": {"count": 443, "pct": 0.7855, "meaning": "capped机制触发止损的当天，baseline公式对同一笔仓位也会同天触发——这些交易的离场价格/return_pct与用baseline公式完全相同(逻辑必然，不是估算)，对win_rate/PF的差异贡献为零。"},
+      "reclassified_from_wouldbe_exit_signal": {"count": 75, "pct": 0.1330, "meaning": "baseline公式下这笔仓位本来会等到更晚的exit_signal才离场，capped机制因为支撑位更高(阈值更容易被触发)提前把它变成了止损离场。"},
+      "earlier_than_baseline_wouldbe_stop": {"count": 24, "pct": 0.0426, "meaning": "baseline公式最终也会触发止损，但触发日期更晚，capped机制先一步止损离场。"},
+      "baseline_never_triggers_within_available_data": {"count": 22, "pct": 0.0390, "meaning": "在可用历史范围内，baseline公式对这笔仓位始终不会触发止损也不会等到exit_signal(数据到窗口末尾仍未平仓)，无法构造baseline的对照结果。"}
+    },
+    "return_comparison_on_differentiating_subset": {
+      "same_day_subset": {"n": 443, "win_rate": 0.3973, "profit_factor": 0.5432, "avg_return_pct": -0.007505, "note": "与baseline完全相同，贡献为0"},
+      "reclassified_from_exit_signal": {
+        "actual_swing_capped_stop": {"n": 75, "win_rate": 0.5067, "profit_factor": 0.8373, "avg_return_pct": -0.003886},
+        "counterfactual_baseline_wouldbe_exit_signal": {"n": 75, "win_rate": 0.3467, "profit_factor": 1.045, "avg_return_pct": 0.002775},
+        "interpretation": "提前止损把win_rate从34.67%推高到50.67%(更多交易被定格为小额'技术性正收益'或较小损失后离场)，但这个子集自身的profit_factor反而从1.045(等到exit_signal，虽然赢的次数少但赢得多)降到0.8373(提前止损，赢的次数多但每次赢得少、加上仍有较多小额亏损)——win_rate和PF在这个子集内部方向相反，说明'提前触发'对这75笔交易不是单向的'全面变好'，是把'少赢大赢'的分布换成了'多赢小赢'的分布。"
+      },
+      "earlier_than_baseline_stop": {
+        "actual_swing_capped_stop": {"n": 24, "win_rate": 0.5, "profit_factor": 1.0304, "avg_return_pct": 0.000575},
+        "counterfactual_baseline_wouldbe_stop_later": {"n": 24, "win_rate": 0.0833, "profit_factor": 0.0199, "avg_return_pct": -0.071535},
+        "interpretation": "这24笔是'更早触发'效应最清晰、最有说服力的证据：如果沿用baseline公式(会触发，但触发得更晚)，这24笔的win_rate只有8.33%、profit_factor仅0.0199、平均亏损7.15%——说明价格在baseline公式最终触发止损之前又继续跌了相当多，capped机制凭借更高的阈值提前把这些仓位在跌得更少的时候就止损了出去，实打实避免了更大的损失。"
+      },
+      "baseline_never_triggers": {
+        "actual_swing_capped_stop": {"n": 22, "win_rate": 0.3636, "profit_factor": 0.1444, "avg_return_pct": -0.026217, "note": "这22笔本身质量偏差(win_rate 36%、PF仅0.14)，是一个如实记录的caveat——不能排除其中一部分是capped机制'过度敏感'的假阳性止损(baseline在可用数据范围内始终没有触发，某种程度上说明这些仓位本不一定需要被止损)，不是单纯的正面证据。"}
+      }
+    },
+    "conclusion": "拆解拆得比较干净，两个效应可以清楚区分且量化：(1)78.55%的止损段交易与baseline公式的结果逐笔完全相同，对聚合层面观察到的改善(win_rate 37.95%→41.49%等)贡献为零；(2)全部的改善都集中在剩下21.45%(121笔)的交易里，而且——由于support_level_capped在数学上被证明(且750个点位实证0反例)永远不会比baseline更晚触发——这121笔交易的差异性质，按照该机制的构造方式，只能是'触发时机更早/更敏感'，不可能是'baseline会误触发、而swing pivot因为定位更准而正确地不触发/晚触发'这种方向的'定位更准'效应，因为这个方向在设计上被数学性质排除了。所以'更早触发' vs '定位更准'这两种此前含糊的解释，在本次的max-floor设计下不是各自贡献一部分、难以拆分的关系，而是可以给出一个明确、有构造性证据支撑的结论：观察到的改善100%是'更早/更敏感触发'效应，'定位更准'在这个具体设计(取更高者兜底)下不可能是任何一部分改善的来源——但这121笔交易内部'提前触发'本身的价值并不是单向正面的：对'earlier_than_baseline_stop'这24笔，提前触发有清晰的正面证据(避免了更大回撤)；但对'reclassified_from_exit_signal'这75笔，提前触发是'牺牲部分潜在更大盈利、换来更高胜率但更低单笔盈亏比'的取舍，不是纯粹的改善；对'baseline_never_triggers'这22笔，甚至可能是过度敏感的假阳性。"
+  },
+
+  "verification": {
+    "baseline_support_series_vectorized_vs_check_trend_gate": {
+      "method": "core.py里新写的baseline_support_series()(向量化、causal)与真实check_trend_gate()生产函数在8个(symbol,date)点位上独立对比，容差0.01。",
+      "samples": [
+        {"symbol": "AAPL", "date": "2026-06-15", "vectorized": 272.4971, "check_trend_gate": 272.5, "match": true},
+        {"symbol": "NVDA", "date": "2026-03-02", "vectorized": 182.9258, "check_trend_gate": 182.93, "match": true},
+        {"symbol": "MSFT", "date": "2025-11-10", "vectorized": 487.9933, "check_trend_gate": 487.99, "match": true},
+        {"symbol": "BOXL", "date": "2026-02-10", "vectorized": 44.3472, "check_trend_gate": 44.35, "match": true},
+        {"symbol": "FXHO", "date": "2026-06-04", "vectorized": 33.7887, "check_trend_gate": 33.79, "match": true},
+        {"symbol": "VRTX", "date": "2025-10-21", "vectorized": 435.065, "check_trend_gate": 435.06, "match": true},
+        {"symbol": "WDAY", "date": "2026-05-08", "vectorized": 177.6167, "check_trend_gate": 177.62, "match": true},
+        {"symbol": "CRM", "date": "2026-01-05", "vectorized": 250.1261, "check_trend_gate": 250.13, "match": true}
+      ],
+      "result": "8/8全部一致(差异均<=0.005，即check_trend_gate()自身四舍五入到小数点后2位的精度范围内)"
+    },
+    "swing_component_capped_equivalence_check": {
+      "method": "把swing_component_series_capped()的max_lookback_weeks设为99999(实质等同不设上限)，与上一轮已通过5点手算验证的mechanisms.py.swing_support_series()在8个symbol上逐日对比。两者在'旧函数要求必须凑满n_pivots个确认点才输出数值'的那些行上应完全相等；在'旧函数因不足n_pivots个而判NaN、新函数用不足n_pivots个的部分点位输出数值'的行上(这是任务要求的新行为，不应相等)不纳入比较。",
+      "result": "8个symbol、1015~1126行可比较范围内，max_abs_diff全部为0.0——确认新函数在两者定义重叠的范围内是旧函数的精确超集，不是重新实现引入了偏差。"
+    },
+    "combined_capped_support_hand_recompute": {
+      "method": "对support_level_capped(order=3,n_pivots=3,cap=104wk)的最终输出(swing分量与baseline分量取max后)，用完全独立的第二套代码路径手算5个点位(手动周线resample、手动扫描局部极小值、手动应用因果确认+回看上限过滤、手动算26周低点/30周均线)，容差0.05。",
+      "samples": [
+        {"symbol": "VRTX", "date": "2025-10-21", "pipeline": 440.87, "hand": 440.87, "swing_component": 440.87, "baseline_component": 435.065, "match": true},
+        {"symbol": "WDAY", "date": "2026-05-08", "pipeline": 233.18, "hand": 233.18, "swing_component": 233.18, "baseline_component": 177.6167, "match": true},
+        {"symbol": "FXHO", "date": "2026-06-04", "pipeline": 4455.0, "hand": 4455.0, "swing_component": 4455.0, "baseline_component": 33.7887, "match": true},
+        {"symbol": "BOXL", "date": "2026-02-10", "pipeline": 63.0, "hand": 63.0, "swing_component": 63.0, "baseline_component": 44.3472, "match": true},
+        {"symbol": "ZS", "date": "2026-05-06", "pipeline": 269.695, "hand": 269.695, "swing_component": 269.695, "baseline_component": 205.4323, "match": true}
+      ],
+      "result": "5/5全部一致，且FXHO/BOXL两个点位的手算结果同样证实了'取max后坏的swing分量压过正常的baseline分量'——不是管道实现的bug，是fxho_boxl_before_after小节描述的真实机制行为。"
+    },
+    "monotonicity_empirical_check": "对564笔止损交易、entry_date到实际离场日之间的所有(symbol,交易日)组合(共750个)逐一核查baseline_state是否曾经在capped机制触发之前就已为真——0个反例，与'capped阈值恒>=baseline阈值，只会同天或更早触发'的数学推导完全吻合。"
+  },
+
+  "comparison_table": [
+    {"variant": "baseline(精确复现, 1年窗口)", "overall_n": 1117, "overall_win_rate": 0.4082, "overall_pf": 1.8577, "stop_n": 469, "stop_win_rate": 0.3795, "stop_pf": 0.4323, "stop_avg_return_pct": -1.117},
+    {"variant": "swing_pivot_order3_n3_cap104wk(1年窗口)", "overall_n": 1183, "overall_win_rate": 0.4235, "overall_pf": 1.8867, "stop_n": 564, "stop_win_rate": 0.4149, "stop_pf": 0.5901, "stop_avg_return_pct": -0.741},
+    {"variant": "swing_pivot_order3_n3_cap156wk(1年窗口)", "overall_n": 1183, "overall_win_rate": 0.4235, "overall_pf": 1.8867, "stop_n": 564, "stop_win_rate": 0.4149, "stop_pf": 0.5901, "stop_avg_return_pct": -0.741, "note": "与cap104wk逐笔完全相同"},
+    {"variant": "swing_pivot_order3_n3_cap104wk_excl_BOXL_FXHO(1年窗口)", "stop_n": 555, "stop_win_rate": 0.4198, "stop_pf": 0.6153, "stop_avg_return_pct": -0.661},
+    {"variant": "baseline(5年窗口)", "overall_n": 4786, "overall_win_rate": 0.4106, "overall_pf": 1.6392, "stop_n": 1240, "stop_win_rate": 0.3863, "stop_pf": 0.4162, "stop_avg_return_pct": -1.191},
+    {"variant": "swing_pivot_order3_n3_cap104wk(5年窗口)", "overall_n": 4997, "overall_win_rate": 0.4195, "overall_pf": 1.631, "stop_n": 1555, "stop_win_rate": 0.4206, "stop_pf": 0.5515, "stop_avg_return_pct": -0.806},
+    {"variant": "swing_pivot_order3_n3_cap104wk_excl_BOXL_FXHO(5年窗口)", "stop_n": 1523, "stop_win_rate": 0.4235, "stop_pf": 0.56, "stop_avg_return_pct": -0.769}
+  ],
+
+  "key_finding": "任务1：本轮精确复现在'笔数'层面完全成功(overall/止损段/离场信号段/窗口末未平仓四个层级与committed diagnostics.json目标值逐一相等：1117/469/648/68)，在'win_rate/PF'层面差距从上一轮的~1%(且笔数本身就对不上，1128 vs 1117)收窄到0.1-0.2个百分点(笔数完全对上)，且把残差具体定位到大概率是1笔临界(entry_price=exit_price、return恰为0)交易的win/loss边界翻转。更重要的是，本轮修正了上一轮的根因误判：不是'Yahoo Finance现在损坏、只能等它自己恢复'，而是本仓库自己的OHLCV缓存逻辑对'curr_date早于服务器今天'的请求永远不会重新拉取——186/186个受影响symbol的'今天'缓存快照统一在一次不稳定的Yahoo抓取窗口内写入了2026-09-08全NaN的行，而这批缓存原本会一直卡住不再刷新，直到本任务主动删除强制重拉。任务2：104周/156周回看上限对order=3/n_pivots=3组合的核心结论是——摆动支撑位机制本身的改善是真实且稳健的(1年窗口止损段win_rate 37.95%→41.49%、PF 0.4323→0.5901；5年窗口38.63%→42.06%、PF 0.4162→0.5515；剔除BOXL/FXHO后改善持续甚至略强)，但加上104周/156周这两档回看上限并没有解决上一轮发现的FXHO/BOXL数据污染问题——追查发现这两只标的的未复权/分批拆股价格失真不是集中在几年前的一次性历史断点，而是持续到2025年下半年才逐步'追上'合理价位的渐进过程，导致污染读数落在距离2026年触发日仅30-45周的范围内，比104周/156周这两档测试的上限短得多，无法被排除；要真正解决这两个具体案例，回看上限需要短到与baseline自身26-30周窗口相当的量级，会让'看得比baseline更远'这个机制本身的设计初衷基本落空。104周与156周这两档在186symbol全部样本(1年和5年窗口)上给出逐笔完全相同的结果，说明这个具体的参数选择在当前样本下没有区分度。'更早触发'vs'定位更准'的拆解本次拆得比较干净：数学上可以证明(且750个点位0反例地实证)support_level_capped恒不低于baseline支撑位，因此该机制永远不会比baseline更晚触发止损——78.55%的止损交易与baseline逐笔结果完全相同(贡献0改善)，全部观察到的改善来自剩下21.45%的交易，且按机制设计，这部分差异只能是'触发更早/更敏感'，'定位更准导致baseline会误触发而本机制正确避开'这个方向在设计上被排除。这21.45%内部进一步拆分显示价值不均：其中24笔(4.3%)有清晰的正面证据(提前止损避免了baseline最终会发生的更大回撤，win_rate从8.33%提升到50%)，75笔(13.3%)是'牺牲潜在更大盈利换更高胜率但更低单笔盈亏比'的取舍(非单向改善)，22笔(3.9%)质量本身偏差、不能排除是过度敏感的假阳性。",
+
+  "recommendation": "任务1(基线复现)：本轮的结果已经足够精确(笔数完全一致，win_rate/PF差距0.1-0.2个百分点且已定位到具体1笔临界交易)，可以作为后续任何进一步验证工作的可靠基线；同时建议把lib/stockstats_utils.py里'_needs_same_day_refresh()对curr_date早于今天的请求永不刷新缓存'这个通用稳健性缺陷作为独立issue记录(不在本任务修复范围内)，因为它会让任何'用过去某天做curr_date跑回测'的场景都有被单次不稳定抓取永久污染缓存的风险，不只是这次的186symbol数据。\n任务2(带回看上限的摆动支撑位)：暂不建议现在就把这个机制写入risk_rules.json替换现有的'26周摆动低点/30周均线取更高者'支撑位公式，具体原因：(1)本轮加回看上限的初衷——解决FXHO/BOXL式的历史数据污染问题——在104周和156周这两个被指定测试的具体参数下没有达成，问题依然存在，说明现在这个'取更高者'的兜底设计对'存在但数值错误'的输入没有防护力，只对'完全缺失'的输入有效，这是一个设计层面的缺口，不是调参能解决的；(2)即使先把FXHO/BOXL数据污染问题放在一边，机制本身在1年和5年窗口、剔除问题标的前后都表现出真实、非样本塌缩的改善，这一点在本轮精确复现的基线上依然成立，值得继续保留为候选机制；(3)拆解结果表明这个改善在数学设计上100%来自'触发更早/更敏感'而非'支撑位定位更准'，且这21%的差异化交易内部本身也不是单向利好(13.3%是胜率换赔率的取舍，3.9%可能是假阳性)——把它写进生产规则前，应该把这理解为'一种更快出局、风险偏好更保守的止损'的策略性变更，而不是'更准确的止损'这样的技术性升级，两者对整体交易频率/胜率分布的影响是不同性质的，需要单独评估是否符合当前策略的风险偏好。建议后续方向：如果仍想采纳这个机制，先专门测试一档明显更短的回看上限(如30-52周区间)看能否真正解决FXHO/BOXL类问题而不显著牺牲相对baseline的结构性优势；同时应该额外给swing分量本身加一个'相对baseline分量的最大合理倍数'这类异常值过滤(而不只是取max兜底)，直接针对'存在但错误'这类输入设防，而不是依赖回看上限这一个维度。在此之前，risk_rules.json的现有支撑位公式(26周低点/30周均线取更高者)应保持不变。"
+}

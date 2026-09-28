@@ -1,0 +1,101 @@
+{
+  "_comment": "默认值仅为示例，不是建议。首次使用前逐条review，尤其是account和universe.exclude_*。",
+  "account": {
+    "account_type": "cash",
+    "_comment_account_type": "现金账户。若以后换成保证金账户，Phase B机械风控第4项要从GFV结算守卫换成PDT规则，见PHASE_B_TASK.md里的说明。",
+    "starting_capital_usd": 10000,
+    "_comment_capital_updated": "示例值，请改成你自己账户的美元本金。系统不接券商，这个数字只用于计算仓位占比；本金变动(入金/出金/汇率)需要你手动更新。",
+    "max_position_pct_per_symbol": 0.2,
+    "max_daily_loss_pct": 0.05,
+    "max_weekly_loss_pct": 0.1,
+    "max_concurrent_positions": 10
+  },
+  "position_sizing_by_conviction": {
+    "high": 0.2,
+    "medium": 0.12,
+    "low": 0.06,
+    "_comment": "沿用FriesTrader/a-stock-screener原版比例(high:20%,medium:12%,low:6%)，high档正好等于max_position_pct_per_symbol的封顶。Phase B据此从Phase A论点的conviction直接查表取size_pct_of_capital，不是临场估的数字。"
+  },
+  "universe": {
+    "watchlist_source": "watchlist.json",
+    "supplementary_scan_type": [
+      "most_actives",
+      "undervalued_growth",
+      "day_gainers",
+      "day_losers"
+    ],
+    "_supplementary_scan_type_options": [
+      "day_gainers",
+      "most_actives",
+      "day_losers",
+      "most_shorted",
+      "undervalued_growth",
+      "small_cap_gainers",
+      "aggressive_small_caps"
+    ],
+    "_comment_scan_type": "2026-08-24改成列表，可以同时跑多个扫描类型。2026-08-25再加入day_gainers(当日涨幅榜，最早用过后换掉，容易捞情绪炒作票)+day_losers(当日跌幅榜，还没用过，抓超跌反弹候选，也更容易踩到真正在恶化的票，需要更谨慎甄别)，凑齐4个类型一起跑。每个类型各取supplementary_scan_max_candidates只，合并去重后再进入Step 1机械过滤，不是从合并后的池子里再截一次。",
+    "watchlist_max_candidates": 24,
+    "supplementary_scan_max_candidates": 6,
+    "signal_triggered_research_budget": 10,
+    "_comment_candidates": "首轮跑先保守设置，验证耗时和数据质量后再放开。SEC EDGAR内置限流(约4次/秒)，yfinance screener端点历史上不稳定，候选太多单轮会更容易撞到某个源的问题。signal_triggered_research_budget是2026-08-28新增的显式字段(此前一直是Step2d里没写进配置的隐性'前6'惯例)——用户反馈候选多的时候前6太少，改成10。PHASE_A_TASK.md Step2d按这个数字截取magnitude score排序后的候选，held_positions和首次强制调研的自选股不占用这个预算。",
+    "max_market_cap_usd": null,
+    "penny_stock_price_threshold_usd": 5,
+    "exclude_otc_pink_sheet": true,
+    "_comment_otc": "取代A股版的exclude_st。美股没有ST标记，但OTC/粉单股票（SEC company_tickers.json里查不到CIK，见us-stock-data SKILL.md）风险特征最接近——信息披露弱、流动性差。",
+    "exclude_new_stock_days": 20,
+    "exclude_exchanges": [],
+    "fundamentals_sourced_scan_types": [
+      "undervalued_growth"
+    ],
+    "_comment_fundamentals_sourced": "2026-09-04新增。这些scan_type来源的候选在PHASE_A_TASK.md Step2a第5点豁免价格/量能门槛，不需要先触发60日涨幅/量比/52周极值信号才能进Step3——起因：用户发现'筛选出来的新股票都有一个特征就是在前几天出现过大幅跳涨'，根因是Step2a的价格/量能门槛对所有候选一视同仁，哪怕候选来自undervalued_growth这种基本面/估值筛选源，也必须先'动过'才能被研究，系统结构上没有渠道发现'基本面变好但股价还没涨'的机会。只列undervalued_growth(已在supplementary_scan_type里)，不是list里的每个类型都适合豁免——day_gainers/day_losers/most_actives/most_shorted/small_cap_gainers/aggressive_small_caps本身就是动量/情绪筛选源，让它们豁免价格门槛没有意义。"
+  },
+  "signal_thresholds": {
+    "price_move_60d_pct": 0.2,
+    "volume_spike_multiple": 2.5,
+    "pct_from_52wk_extreme": 0.05
+  },
+  "trend_tracking": {
+    "lookback_days": 7,
+    "min_institutional_holding_change_pct": 0.3,
+    "min_analyst_rating_shift": 1,
+    "_comment": "对比sentiment_history.jsonl里N天前的快照，捕捉价格还没明显异动但机构持仓/分析师评级正在转向的候选。min_analyst_rating_shift按'评级档位数'算(比如Hold->Buy记1档)，不是百分比。"
+  },
+  "_comment_risk_flags": "2026-08-23新增counterparty_credit_risk：起因是读NVDA一条之前被跳过没读的8-K，发现NVIDIA为OpenAI的数据中心租约做了最高1050亿美元的剩余价值担保(OpenAI违约NVIDIA代付)——这种'自己没问题，但为第三方债务兜底'的风险，原有11个类别里没有一个能装，insolvency_or_liquidity_concern说的是本票自己的偿付能力，语义不对。",
+  "risk_flags_enum": [
+    "otc_or_delisting_risk",
+    "under_regulatory_investigation",
+    "trading_halted",
+    "circuit_breaker_triggered",
+    "dilution_or_offering",
+    "meme_speculation_no_fundamental",
+    "high_institutional_outflow",
+    "lockup_expiry_near",
+    "high_short_interest_squeeze_risk",
+    "insolvency_or_liquidity_concern",
+    "unsettled_funds_gfv_risk",
+    "counterparty_credit_risk",
+    "extended_after_large_move"
+  ],
+  "_comment_extended_after_large_move": "2026-09-04新增。触发条件见PHASE_A_TASK.md 3.3b：候选1/2/3/5/10/20日任一trailing涨跌幅落在其所属行业market_calibration.json的top10分位桶，且该桶drop5pct_5d>rally5pct_5d(历史统计上继续下跌的概率高于反弹)。用户原话('筛选出来的新股票都有一个特征就是在前几天出现过大幅跳涨，这个感觉不太对吧')促成——之前3.3b只是把这个信息写进thesis文字里，不会自动影响conviction，容易被基本面证据的强叙事盖过去，加这个flag把它从'文字里的一条信息'变成'机械拦一道'。",
+  "trend_gate": {
+    "weekly_support_lookback_weeks": 26,
+    "weekly_support_ma_period_weeks": 30,
+    "price_stop_loss_pct_below_support": 0.03,
+    "price_stop_loss_confirm_days": 5,
+    "_comment": "2026-08-31新增，吸收用户提供的'MACD六周期共振战法'截图里月线+周线宏观趋势闸门+周线支撑位价格止损的思路，对应us-stock-data的technical_signals.check_trend_gate()。weekly_support_level = max(最近weekly_support_lookback_weeks根周线收盘价最低点, 周线weekly_support_ma_period_weeks周均线)，取更保守(更高)的一个。price_stop_loss：最近price_stop_loss_confirm_days个交易日的日收盘价连续低于support_level*(1-price_stop_loss_pct_below_support)才触发，单日插针不算——Phase B据此对持仓强制归为sell，不看当天thesis/direction，是独立于论点判断的价格纪律止损。trend_regime(strong_aligned/pullback/weak_rebound/bearish_confirmed/insufficient_history)由PHASE_A_TASK.md 3.1a使用，是conviction的封顶机制，不直接决定direction。2026-09-08更新confirm_days从3改成5：186只股票1年期回测(见us-stock-screener/strategy_backtest_diagnostics.json)发现price_stop_loss段系统性亏钱(537笔/胜率32.77%/PF 0.30)，测试了多组参数(3%/5%/7%缓冲×3/5天确认)，只有'3%缓冲/5天确认'这组真实改善了止损段本身质量(胜率32.59%→38.17%，PF 0.2966→0.4327)且整体策略PF也是5组里最高，其余参数调整(放宽缓冲%)反而单调变差。同时测试过'entry时用trend_regime过滤'和'entry时要求价格在支撑位之上'两条规则，前者无效，后者虽然让整体数字变好但止损段本身反而崩到0%胜率(见strategy_backtest_entry_support_gated.json)，是靠腰斩交易量+把亏损留给少数更深的真实趋势反转换来的，没有真正解决问题，未采纳。真正的病根是entry信号(纯日线级别)不检查长周期支撑位置，这个问题目前还没有找到真正解决的办法，5天确认只是部分缓解。2026-09-09：调研TradingView社区策略库(/scripts/)找止损/趋势过滤思路，精选7个开源脚本人工评估后，用相同的186只股票1年期回测方法论逐个验证了5个机制，全部不采纳，但过程中留下两个候选和一个infra发现：(1)ADX(14)>25过滤entry——per-symbol独立回测显示止损段真实改善(胜率37.95%→44.53%，PF 0.432→0.463，见strategy_backtest_adx_filter_and_atr_stop.json)，但在更贴近实盘的组合级联合模拟(186只股票共享资金/execution_pacing每日3笔上限/max_concurrent_positions=10约束)下结果反转(胜率29.41%→18.52%，PF 0.262→0.111，见strategy_backtest_adx_portfolio_level_pacing_test.json，样本n=27-34偏薄但方向明确)——不采纳为硬性entry前置条件，未来若要用只能当risk_flag式的观察性提示，且需要用真实conviction分层(而非本次统一12%仓位简化)数据重新验证。(2)ATR(14)自适应止损(固定距离/移动跟踪两种子变体，1.5-2.5x ATR)和两者与ADX的组合——全部劣于现有支撑位止损，不采纳。(3)Chande Kroll Stop(Tushar Chande标准参数10/1.0/9)替代现有止损——'不可比'，即使5天确认下仍吞掉94.8%的全部交易，把低频策略实质性改造成止损驱动的高频策略，不采纳，且明确这不是'表现差'而是'超出止损参数微调范畴的策略层面变更'。(4)摆动高低点支撑位(order=3局部极小值，取最近3个已确认摆动低点的最高者，替代现有'26周低点/30周均线取更高者')——精确复现基线后确认止损段有真实、非样本塌缩的改善(胜率37.95%→41.49%，PF 0.432→0.590，5年窗口和剔除2只数据异常股票后依然成立，见strategy_backtest_swing_pivot_lookback_capped_refreshed.json)，且数学可证明(750点位0反例)这个机制永远不会比现有公式更晚触发、只会同天或更早——但两个问题暂缓采纳：给'往回找摆动低点'加104/156周回看上限未能解决FXHO/BOXL两只股票因未复权拆股导致的历史价格污染(污染读数落在30-45周内，比测试的上限更短)，且交易层面拆解证实改善100%来自'触发更早更敏感'而非'支撑位定位更准'，是风险偏好上更保守的策略性变更，不是免费的准确性提升，需要先测更短的回看上限(30-52周)+给swing分量单独加异常值过滤再考虑采纳。(5)意外发现的infra bug(不是TradingView相关，是排查基线复现偏差时挖出来的)：us-stock-data skill的lib/stockstats_utils.py的_needs_same_day_refresh()对curr_date早于'今天'的请求永远不重新拉取缓存，导致一次Yahoo Finance瞬时抖动写入的NaN坏数据被永久锁死在缓存里(2026-09-08那天186/186个symbol全部命中)——已修复(加了_cache_row_is_nan_for_requested_day()检测，命中即强制重拉，不再只看日期新旧)。2026-09-09续：追查FXHO/BOXL污染根因时又发现第二个infra bug——同一份缓存对'过去curr_date'请求，即使内容不是NaN，也可能因为该股票之后又发生了新的缩股(yfinance的auto_adjust=True会追溯调整全部历史价格)而变得过期，导致同一历史日期在不同时间点下载会给出不同数字。已修复(加了_cache_stale_relative_to_new_splits()，缓存文件建立时间早于该股票最近一次已知缩股生效日就强制重拉，用受控测试端到端验证过判定→重新下载→数据一致这条链路真实生效，不只是逻辑正确)。围绕摆动支撑位候选又做了三轮补测(缩短回看上限到30/40/52周、给'取更高者'加2倍异常值过滤、加零成交量过滤)，结论：40周上限+2倍异常值过滤是效果最好的配置(止损段胜率37.95%→41.61%，PF 0.432→0.601，见strategy_backtest_swing_pivot_shortcap_outlierfilter_portfolio.json)，且首次做组合级(186只股票共享资金池)总收益测试验证——没有像ADX那样反转，改善保留甚至更强(组合止损段胜率26.92%→40.54%，组合总收益86.26%→88.75%)。但FXHO/BOXL污染问题查明根因后确认三条路都修不好：零成交量过滤是纯no-op(跟40周上限完全重叠)，2倍异常值过滤解决4个已知污染点位中的2个，剩下2个的真正成因是FXHO(5次真实缩股，累计约125万:1)/BOXL(4次，累计约1440:1)缩股过于密集，yfinance把不同缩股窗口之间本不可比的历史价格强行统一复权——这是vendor复权方法论的局限，不是我们支撑位公式能修的问题(见strategy_backtest_swing_pivot_zerovolume_filter_final.json)。摆动支撑位维持'候选保留、暂不上线'。2026-09-09再续：调研TradingView知名作者Zeiierman主页(231个脚本，多数是indicator没有明确买卖规则)，精选3个indicator(Ranked Support & Resistance Zones/Ranked Order Block Zones/Range Oscillator，均未获取Pine源码，是基于文字描述的自行操作化实现)测试支撑位定义和入场过滤的第三、四种候选方法论：Ranked S&R止损段胜率40.4%/PF 0.563，不及已候选的摆动支撑位，不采纳；Ranked Order Block(k=1.5,6因子等权重,candidate与baseline取更高者)止损段胜率41.34%/PF 0.780(剔除污染标的后0.805)，是本仓库测过的所有止损方案里per-symbol数字最好的，但43.65%的时间选中的价格高于当前股价，已经不是字面意义的'支撑位'；Range Oscillator的'避免追高'入场过滤(振荡器<+50才买，仿Keltner Channel构造，N=14/mult=2.0)止损段胜率37.95%→38.96%/PF 0.432→0.530，是唯一一次'6组参数全部同方向改善'的机制，但拦掉61%的entry触发。这两个候选转正需要组合级验证——2026-09-10组合级测试(见strategy_backtest_orderblock_rangeosc_portfolio_level.json)：per-symbol的止损段改善这次都被组合级约束保留了(Order Block 26.92%→40.82%胜率；Range Osc 26.92%→53.66%胜率)，但**组合总收益率反而都明显更差**(baseline 86.26% vs Order Block 48.56% vs Range Osc 52.90%)——这是第三种失败模式(区别于ADX轮的'指标反转'和摆动支撑位轮的'指标和总收益都改善')：Order Block止损触发频率翻倍、把本该演变成大赢家的仓位提前砍断(AMD案例：提前止损打断资金链，下次入场被顺延15个交易日错过主升浪，少赚$321)；Range Osc的'避免追高'恰好精准挡住了本次窗口最赚钱的一批信号(56.3%的历史真实交易会被拦下，这些交易贡献了81.3%的已实现利润，AMD近700%的主升浪从首次触发起振荡器读数就再没跌回50以下，整段被永久锁死)。两个都不采纳，核心教训是'止损段win_rate/PF变好不能代表组合总收益会更好'，必须两层都测过才能下结论。"
+  },
+  "_comment_external_entry_signal_research": "2026-09-09~10：除trend_gate._comment记录的止损/支撑位方向调研外，同一轮TradingView调研还测了几个entry信号候选(跟止损无关，是'要不要新增/替代entry信号'这个问题)，全部不采纳，记录在案避免以后重复测：(1)Zeiierman的两个strategy类型脚本——Dynamic Swing Anchored VWAP STRAT(摆动结构翻转买卖，无内置止损)和Dual-Phase Trend Regime Strategy(波动率状态切换快慢振荡器)，均未获取Pine源码、按文字描述操作化实现。VWAP STRAT最优参数(prd=5+现有price_stop_loss)PF=1.56，Dual-Phase四档PF集中在1.25-1.29且交易密度是基线的3倍以上(高频噪音信号，跟系统低频结构性设计哲学不匹配)——两者PF均低于现有entry/exit基线的1.858，不采纳(见strategy_backtest_zeiierman_vwap_and_dualphase.json)。(2)Fibonacci Cloud Multi-Timeframe Scanner(叠三层斐波那契回撤网格找多线重合)，部分参数未获取到官方默认值、自行操作化实现，测试的全部10组配置PF都低于基线、多数还低于1，作者自己声明'均值回归工具，强趋势环境表现差'，跟本项目186只股票候选池(为动量/突破类信号筛出来的)天然不匹配，不采纳(见strategy_backtest_fibcloud_and_momentumseq.json)。(3)Momentum Sequence Strategy+(Herman)——规则完全数字化、精确按文字实现，不需要猜测：一根看跌主K线后接N根(用N=5)连续看涨确认K线(低点递增、收盘价递增)入场，止损设在主K线低点，止盈按R倍数(R=1.5)。这是目前唯一per-symbol真正跑赢基线的新entry候选：1年窗口PF=2.43，2年窗口复测样本量翻倍(141→293笔)后依然稳健(PF=2.25，剔除最赚3笔后仍2.08)。但组合级测试(2026-09-10，见strategy_backtest_momentumseq_2yr_and_portfolio.json)出现第三种失败模式：per-trade指标在组合级约束下没有反转、反而更好(胜率56.96% vs baseline 41.38%，PF 3.08 vs 2.65)，但组合总收益率仍然更差(167.36% vs baseline 233.35%)——根因不是信号质量问题，是结构性的资金周转矛盾：这类信号平均持仓53天(是baseline的2.2倍)，导致2年里只能循环79次交易(baseline循环203次)，且首次真的把max_concurrent_positions=10这个并发上限打满触发(baseline全程只到8，从未被这条规则真正卡过)——好机会因为长线仓位占着位置腾不出手而排不上队，不是信号不够好。暂不采纳，但比其他候选更值得后续跟进：如果以后想继续深挖，可以测'给这类长周期信号单独开一个子资金池'或'降低单笔仓位比例换取更高并发数'这两个具体假设，目前都还没测过。",
+  "cash_settlement": {
+    "gfv_guard": true,
+    "_comment": "取代A股版的t_plus_1字段。现金账户下，用未结算资金(近期卖出所得，未到T+1结算完成)买入的仓位，在结算完成前卖出会触发Good Faith Violation。Phase B Step2机械检查第4项据此判断，见PHASE_B_TASK.md。"
+  },
+  "execution_pacing": {
+    "max_new_positions_per_day": 3,
+    "_comment": "2026-08-23新增，防止零持仓起步时一次性把多个新论点全部按标准仓位买满(实测8个long论点一次性买满会占用90%起始资金，属于'每条单票规则都通过但整体节奏过快'的情况，之前完全没有机制拦)。max_new_positions_per_day限制单次Phase B最多批准几个'新开仓'(不含已持仓的加/减仓)。只影响buy的批准数量，不影响sell/hold，也不改变Phase A的论点本身——超出节奏的候选被标记action:defer，下次Phase B自动重新排队，不需要重新调研。",
+    "_comment_weekly_cap_removed": "2026-08-27移除max_capital_deployed_pct_per_week(原0.50)：用户反馈只需要控制'每天不要集中买'，不需要额外的周度资金上限——尤其是账户还在建仓早期、真实持仓本来就不多的阶段，周度上限反而容易在持仓集中到几周内多次触发时把明显合理的候选也一起拦掉(2026-08-27当天就出现了这种情况：3笔真实持仓一叠加，连最小档位新仓位都放不下)。PHASE_B_TASK.md Step2c第3点(资金上限检查)已同步移除，只保留第2点(每日新开仓数量上限)。"
+  },
+  "execution": {
+    "mode": "dry_run",
+    "_comment": "即便设为live，本系统也只生成操作清单，不会自动下单——本系统设计上完全不连接任何券商API。下单永远由人工在券商App完成。"
+  }
+}

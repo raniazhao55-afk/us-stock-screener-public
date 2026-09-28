@@ -1,0 +1,9 @@
+beautifulsoup4==4.15.0
+lxml==6.1.2
+numpy==2.5.2
+pandas==2.3.3
+python-dateutil==2.9.0.post0
+requests==2.34.2
+stockstats==0.6.8
+vibe-trading-ai==0.1.14
+yfinance==1.6.0

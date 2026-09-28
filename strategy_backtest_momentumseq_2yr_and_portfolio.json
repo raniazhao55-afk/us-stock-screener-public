@@ -1,0 +1,825 @@
+{
+  "built_date": "2026-09-09",
+  "purpose": "对strategy_backtest_fibcloud_and_momentumseq.json里策略1(Momentum Sequence Strategy+, N=5确认序列/主K线止损/1.5倍R止盈)的第二轮验证：(1) 把per-symbol测试窗口从1年扩到2年检查样本量/PF/win_rate是否稳健漂移；(2) 在186只股票共享资金池/execution_pacing/max_concurrent_positions的组合级(portfolio-level)真实资金约束下重新模拟，检验per-symbol的正面结果(1年PF 2.4294 vs 基线1.8574)能否保留，从而判断能否真的考虑写入risk_rules.json。组合级方法论完全复用strategy_backtest_adx_portfolio_level_pacing_test.json / strategy_backtest_orderblock_rangeosc_portfolio_level.json的模拟引擎(共享现金池、execution_pacing每日新开仓上限、max_concurrent_positions上限、EXIT先于ENTRY同日处理、medium=12%仓位统一简化假设、字母序队列每日重排)，不新发明规则——这两轮测试的核心教训是per-symbol结果不能预测组合级结果(ADX方向反转/摆动支撑位未反转/Order Block止损段指标改善但组合总收益更差)，本次必须真的跑。",
+  "universe": "186只股票，从strategy_backtest_entry_exit.json的industries.*.trades[].symbol去重程序化提取，与此前全部轮次(entry_exit/fibcloud_momentumseq/adx_portfolio/orderblock_rangeosc_portfolio等)完全同一份universe，186/186全部有完整历史数据，最后可用交易日全部为2026-09-08",
+  "data_snapshot": {
+    "task1_2yr_per_symbol": "复用strategy_backtest_fibcloud_and_momentumseq.json同一套us-stock-data实时缓存(lib.stockstats_utils.load_ohlcv)，CURR_DATE=2026-09-08，与1年窗口结果使用完全相同的数据源/相同的momentum_seq.py核心逻辑(mother candle+N=5确认链+主K线止损+1.5倍R止盈)，唯一改动是窗口天数参数(365->730)，其余代码零改动，保证1年vs2年结果之间的差异只反映窗口长度本身，不掺杂实现差异。",
+    "task2_portfolio": "复用swingcap_zv轮次(strategy_backtest_swing_pivot_shortcap_outlierfilter_portfolio.json/strategy_backtest_zeiierman_ranked_zones_and_range_osc.json/strategy_backtest_orderblock_rangeosc_portfolio_level.json)已冻结的frozen_ohlcv.pkl快照(186只股票，CURR_DATE=2026-09-09，全部覆盖到最后交易日2026-09-08)，通过core_zv.load_symbol_frame()读取生产环境entry_state/exit_state/entry_rise/exit_rise逻辑(_prepared_df()原样调用，未修改)，baseline止损用core_zv.build_weekly_and_support()+price_stop_loss_series()生成的baseline_support(26周swing low/30周MA，3%缓冲/5天确认)——这是ADX轮/orderblock轮同一个'baseline'定义(不是swing_pivot轮引入的support_level_capped版本)，因为这是risk_rules.json/trend_gate实际生产环境使用的止损公式。Momentum Sequence的mother candle/确认链检测直接在这份快照的open/high/low/close上运行，与task1使用的是同一批股票同一段历史(仅数据源从'实时缓存'换成'冻结快照'，两者是同一份底层行情，只是抓取时点不同，见methodology_note里的交叉验证说明)。"
+  },
+  "risk_rules_params_used": {
+    "source": "程序化从risk_rules.json读取，不手抄",
+    "account.starting_capital_usd": 2192.82,
+    "execution_pacing.max_new_positions_per_day": 3,
+    "account.max_concurrent_positions": 10,
+    "position_sizing_by_conviction.medium": 0.12,
+    "trend_gate.price_stop_loss_pct_below_support": 0.03,
+    "trend_gate.price_stop_loss_confirm_days": 5,
+    "trend_gate.weekly_support_lookback_weeks": 26,
+    "trend_gate.weekly_support_ma_period_weeks": 30,
+    "momentum_seq_own_params": "N=5(确认K线根数,固定用最优档), R倍数=1.5(固定用最优档)，止损=主K线最低点，止盈=入场价+1.5xR——这两个参数不来自risk_rules.json,是策略自身定义,原样沿用strategy_backtest_fibcloud_and_momentumseq.json的结论(N=5/R=1.5是12组网格里的最优档)"
+  },
+  "methodology_note": "任务1(2年窗口per-symbol稳健性复测)：窗口定义从'每只股票最后交易日往前推365日历天'改成'往前推730日历天'，历史不足730天的股票用能拿到的全部历史(与1年窗口同样的降级规则，代码零改动，只是WINDOW_DAYS参数从365变成730)。186只股票universe/N=5确认序列/主K线止损/1.5倍R止盈/入场价=最后确认K线收盘价/止损止盈同日触发止损优先/止损止盈成交价取精确触及价位——全部方法论细节与1年窗口结果(strategy_backtest_fibcloud_and_momentumseq.json)完全一致，只改窗口长度这一个变量，保证对比干净。\n\n任务2(组合级真实资金约束测试)：用2年窗口(理由见key_finding——2年窗口样本量从141笔/105只股票几乎翻倍到293笔/156只股票，win_rate/profit_factor基本没有漂移，明显比1年窗口更适合做组合级测试，样本更充分)。baseline变体=现有entry六线rising edge入场+现有price_stop_loss(3%/5天/26周/30周)止损+exit六线rising edge退出，完全不含Momentum Sequence，是当前生产逻辑的直接复刻。momentum_seq变体=只用Momentum Sequence信号(N=5确认链完成日=rising edge)触发买入，退出完全用自带的主K线止损+1.5倍R止盈(不使用price_stop_loss机制，这是延续1年窗口报告'自带止损更优'的结论，且用户任务描述里明确要求这样做)。两个变体共享同一份frames/calendar，186只股票共享同一个起始资金池($2192.82)，execution_pacing每日新开仓上限=3，max_concurrent_positions=10，medium档=0.12仓位统一简化假设(Phase A conviction/technical/calibration在这个纯回测环境里全部缺失/打平，字母序是队列排序规则里唯一起作用的一条，与此前所有组合级轮次做法一致)，字母序排队顺延超额候选，EXIT步骤先于ENTRY步骤同日处理(当天有仓位退出立刻释放现金/名额，可供当天ENTRY步骤使用，与此前轮次一致)。\n\nmomentum_seq变体相对baseline/ADX/orderblock轮通用引擎有两处必须做的泛化，如实declare(不是发明新规则，是把'Momentum Sequence这个信号自带持仓专属止损止盈价位'这个已有属性接入已有的组合级引擎骨架)：(a) 退出机制从'通用布尔列(price_stop_loss_triggered/exit_rise)'换成'仓位专属价位判定'——每个momentum_seq仓位在建仓时锁定stop_price(=该次setup的主K线最低点，setup识别时就已固定，不随成交延迟变化)和tp_price(=实际成交价+1.5x(实际成交价-stop_price))，此后每日检查当日low<=stop_price(止损)/high>=tp_price(止盈)，同日都触发止损优先，成交价取精确触及价位——与per-symbol回测(task1/1年窗口)的止损止盈判定逻辑完全一致，只是从'单只股票连续扫描'换成'组合级按日推进'。(b) 成交价的口径：候选被daily_cap/concurrent_cap/cash_shortfall顺延后，真正成交时用的是实际成交当天的收盘价(不是最初触发日那根确认K线的收盘价)，这与baseline/ADX/orderblock轮'候选只携带触发元数据，实际成交价格由队列放行的那一天决定'的既定惯例完全一致，不是给momentum_seq单独开的特例；由此派生出一个必须显式处理的边界情况——如果顺延太久，真正放行时的收盘价已经跌破(或触及)当初锁定的止损价(mother candle最低点)，这笔候选被判定'失效'(invalidated_stop_breached)，直接从队列移除、不再重新排队、不计入交易，而不是仍然按'亏本价'开仓——这是唯一一处我们自己选定的操作化规则(不是原文/不是复用别的轮次的规则)，理由：一个'入场价已经等于或低于自己定义的止损价'的仓位没有正的风险回报可言，硬开出来毫无意义，判定失效是唯一合理选择。失效检查在每一天对队列里所有候选执行(不只是当天排到号的候选)，检查顺序在daily_cap/concurrent_cap/cash_shortfall门槛判断之前——价格是否已跌破止损，与它当天是否'轮到成交'是两件独立的事，所以失效判定不受当天排队名额限制。这个失效比例本身就是一个重要发现，见key_finding。\n\n两个变体的entry_rise/exit_rise/baseline_support都用core_zv.load_symbol_frame()+build_weekly_and_support()的生产逻辑原样生成，与ADX轮/orderblock轮的baseline定义完全对齐，可以跨轮次直接比较capital_utilization/deferred_queue这类结构性指标。",
+  "task1_2yr_window_per_symbol_result": {
+    "N5_R1.5_native_2yr": {
+      "total_trades": 293,
+      "win_rate": 0.5495,
+      "profit_factor": 2.2505,
+      "avg_return_pct": 0.0646,
+      "median_return_pct": 0.08831,
+      "avg_holding_days": 36.9,
+      "open_positions_at_window_end": 12,
+      "n_symbols_with_at_least_1_trade": 156
+    },
+    "comparison_to_1yr": {
+      "1yr_N5_R1.5_native": {
+        "total_trades": 141,
+        "win_rate": 0.5603,
+        "profit_factor": 2.4294,
+        "avg_return_pct": 0.07113,
+        "median_return_pct": 0.08854,
+        "n_symbols_with_at_least_1_trade": 105
+      },
+      "2yr_N5_R1.5_native": {
+        "total_trades": 293,
+        "win_rate": 0.5495,
+        "profit_factor": 2.2505,
+        "avg_return_pct": 0.0646,
+        "median_return_pct": 0.08831,
+        "avg_holding_days": 36.9,
+        "open_positions_at_window_end": 12,
+        "n_symbols_with_at_least_1_trade": 156
+      },
+      "sample_size_growth": "total_trades从141笔增长到293笔(+107.8%)，n_symbols_with_at_least_1_trade从105只增长到156只(+51只,+48.6%)——符合预期('2年窗口应该给更多股票机会出现至少一次N=5确认序列')，不是样本量停滞或反常收缩。",
+      "quality_drift": "win_rate从0.5603降到0.5495(-1.1个百分点,基本持平)，profit_factor从2.4294降到2.2505(-0.179，仍大幅高于基线1.8574)，avg_return_pct从0.07113降到0.0646(小幅下降)，median_return_pct从0.08854到0.08831(几乎不变)。整体判断：轻微漂移，方向是'略微变弱但远未反转'，不是'虚假的1年窗口运气'。"
+    },
+    "robustness_check_excl_top3": {
+      "method": "剔除按return_pct排序收益最高的3笔交易后重算，方法与1年窗口报告一致",
+      "top3_excluded": [
+        {
+          "symbol": "QUBT",
+          "entry_date": "2024-11-25",
+          "exit_date": "2024-12-17",
+          "return_pct": 1.0675,
+          "exit_reason": "take_profit"
+        },
+        {
+          "symbol": "QBTS",
+          "entry_date": "2025-03-17",
+          "exit_date": "2025-09-17",
+          "return_pct": 0.8976,
+          "exit_reason": "take_profit"
+        },
+        {
+          "symbol": "IONQ",
+          "entry_date": "2026-04-16",
+          "exit_date": "2026-05-28",
+          "return_pct": 0.5662,
+          "exit_reason": "take_profit"
+        }
+      ],
+      "after_removal": {
+        "n": 290,
+        "win_rate": 0.5448,
+        "profit_factor": 2.0832,
+        "avg_return_pct": 0.05654,
+        "median_return_pct": 0.085547
+      },
+      "verdict": "剔除最赚3笔后PF从2.2505降到2.0832，仍明显高于基线1.8574，不是被少数几笔极端交易撑起来的假象，与1年窗口的稳健性结论(剔除后PF 2.4294->2.2018)方向一致。"
+    },
+    "verdict": "2年窗口下Momentum Sequence(N5/R1.5)结果稳健：样本量随窗口扩大合理翻倍增长，win_rate/PF只有轻微漂移而非反转或明显恶化，剔除极端值后依然稳健跑赢基线。"
+  },
+  "task1_verification": {
+    "method": "对2年窗口N5_R1.5_native的293笔交易独立抽5笔(3笔take_profit/2笔stop_loss)，用完全独立重写的显式Python for循环逐根K线重算(不导入momentum_seq.py的find_setups/run_backtest向量化实现)，逐笔核对mother candle看跌/N=5确认链条件(每根bullish/low>mother_low/收盘价整链严格递增)/入场日期价格/止损止盈价位/出场日期原因/2年窗口归属，方法与strategy_backtest_fibcloud_and_momentumseq.json的verification完全一致。",
+    "result": "5/5全部通过(entry_conditions_hold/entry_date_matches/within_2yr_window_recheck/entry_price_matches/stop_price_matches/tp_price_matches/exit_date_matches/exit_reason_matches全部为True)，未发现任何不匹配。",
+    "samples": [
+      {
+        "symbol": "AVGO",
+        "reported_entry_date": "2025-08-28",
+        "recomputed_entry_date": "2025-08-28",
+        "entry_date_matches": true,
+        "mother_candle_bearish": true,
+        "all_N_confirmation_candles_valid": true,
+        "entry_conditions_hold": true,
+        "within_2yr_window_recheck": true,
+        "window_start_2yr_recomputed": "2024-09-08",
+        "reported_entry_price": 306.4049,
+        "recomputed_entry_price": 306.4049,
+        "entry_price_matches": true,
+        "reported_stop_price": 284.0885,
+        "recomputed_stop_price": 284.0885,
+        "stop_price_matches": true,
+        "reported_tp_price": 339.8796,
+        "recomputed_tp_price": 339.8796,
+        "tp_price_matches": true,
+        "reported_exit_date": "2025-09-05",
+        "recomputed_exit_date": "2025-09-05",
+        "exit_date_matches": true,
+        "reported_exit_reason": "take_profit",
+        "recomputed_exit_reason": "take_profit",
+        "exit_reason_matches": true,
+        "confirmation_candle_detail": [
+          {
+            "idx": 992,
+            "date": "2025-08-22",
+            "bullish": true,
+            "low_above_mother_low": true,
+            "close_higher_than_prev": true,
+            "close": 291.86151123046875,
+            "open": 289.62787721594987,
+            "low": 286.9078170439723,
+            "prev_close_compared": 287.4935302734375
+          },
+          {
+            "idx": 993,
+            "date": "2025-08-25",
+            "bullish": true,
+            "low_above_mother_low": true,
+            "close_higher_than_prev": true,
+            "close": 292.08984375,
+            "open": 290.6801592013728,
+            "low": 289.58815431097145,
+            "prev_close_compared": 291.86151123046875
+          },
+          {
+            "idx": 994,
+            "date": "2025-08-26",
+            "bullish": true,
+            "low_above_mother_low": true,
+            "close_higher_than_prev": true,
+            "close": 295.8423767089844,
+            "open": 292.2089947866335,
+            "low": 291.85159756207963,
+            "prev_close_compared": 292.08984375
+          },
+          {
+            "idx": 995,
+            "date": "2025-08-27",
+            "bullish": true,
+            "low_above_mother_low": true,
+            "close_higher_than_prev": true,
+            "close": 298.0660705566406,
+            "open": 295.36585381804196,
+            "low": 291.6431302057609,
+            "prev_close_compared": 295.8423767089844
+          },
+          {
+            "idx": 996,
+            "date": "2025-08-28",
+            "bullish": true,
+            "low_above_mother_low": true,
+            "close_higher_than_prev": true,
+            "close": 306.4049377441406,
+            "open": 300.7265426280411,
+            "low": 300.13090084469644,
+            "prev_close_compared": 298.0660705566406
+          }
+        ]
+      },
+      {
+        "symbol": "QBTS",
+        "reported_entry_date": "2025-03-17",
+        "recomputed_entry_date": "2025-03-17",
+        "entry_date_matches": true,
+        "mother_candle_bearish": true,
+        "all_N_confirmation_candles_valid": true,
+        "entry_conditions_hold": true,
+        "within_2yr_window_recheck": true,
+        "window_start_2yr_recomputed": "2024-09-08",
+        "reported_entry_price": 11.18,
+        "recomputed_entry_price": 11.18,
+        "entry_price_matches": true,
+        "reported_stop_price": 4.49,
+        "recomputed_stop_price": 4.49,
+        "stop_price_matches": true,
+        "reported_tp_price": 21.215,
+        "recomputed_tp_price": 21.215,
+        "tp_price_matches": true,
+        "reported_exit_date": "2025-09-17",
+        "recomputed_exit_date": "2025-09-17",
+        "exit_date_matches": true,
+        "reported_exit_reason": "take_profit",
+        "recomputed_exit_reason": "take_profit",
+        "exit_reason_matches": true,
+        "confirmation_candle_detail": [
+          {
+            "idx": 878,
+            "date": "2025-03-11",
+            "bullish": true,
+            "low_above_mother_low": true,
+            "close_higher_than_prev": true,
+            "close": 5.380000114440918,
+            "open": 4.690000057220459,
+            "low": 4.570000171661377,
+            "prev_close_compared": 4.630000114440918
+          },
+          {
+            "idx": 879,
+            "date": "2025-03-12",
+            "bullish": true,
+            "low_above_mother_low": true,
+            "close_higher_than_prev": true,
+            "close": 5.820000171661377,
+            "open": 5.635000228881836,
+            "low": 5.335000038146973,
+            "prev_close_compared": 5.380000114440918
+          },
+          {
+            "idx": 880,
+            "date": "2025-03-13",
+            "bullish": true,
+            "low_above_mother_low": true,
+            "close_higher_than_prev": true,
+            "close": 6.909999847412109,
+            "open": 6.059999942779541,
+            "low": 6.039999961853027,
+            "prev_close_compared": 5.820000171661377
+          },
+          {
+            "idx": 881,
+            "date": "2025-03-14",
+            "bullish": true,
+            "low_above_mother_low": true,
+            "close_higher_than_prev": true,
+            "close": 10.149999618530272,
+            "open": 7.699999809265137,
+            "low": 7.619999885559082,
+            "prev_close_compared": 6.909999847412109
+          },
+          {
+            "idx": 882,
+            "date": "2025-03-17",
+            "bullish": true,
+            "low_above_mother_low": true,
+            "close_higher_than_prev": true,
+            "close": 11.18000030517578,
+            "open": 10.90999984741211,
+            "low": 10.229999542236328,
+            "prev_close_compared": 10.149999618530272
+          }
+        ]
+      },
+      {
+        "symbol": "BLTE",
+        "reported_entry_date": "2025-11-18",
+        "recomputed_entry_date": "2025-11-18",
+        "entry_date_matches": true,
+        "mother_candle_bearish": true,
+        "all_N_confirmation_candles_valid": true,
+        "entry_conditions_hold": true,
+        "within_2yr_window_recheck": true,
+        "window_start_2yr_recomputed": "2024-09-08",
+        "reported_entry_price": 123.19,
+        "recomputed_entry_price": 123.19,
+        "entry_price_matches": true,
+        "reported_stop_price": 102.0,
+        "recomputed_stop_price": 102.0,
+        "stop_price_matches": true,
+        "reported_tp_price": 154.975,
+        "recomputed_tp_price": 154.975,
+        "tp_price_matches": true,
+        "reported_exit_date": "2025-12-01",
+        "recomputed_exit_date": "2025-12-01",
+        "exit_date_matches": true,
+        "reported_exit_reason": "take_profit",
+        "recomputed_exit_reason": "take_profit",
+        "exit_reason_matches": true,
+        "confirmation_candle_detail": [
+          {
+            "idx": 888,
+            "date": "2025-11-12",
+            "bullish": true,
+            "low_above_mother_low": true,
+            "close_higher_than_prev": true,
+            "close": 110.81500244140624,
+            "open": 109.70999908447266,
+            "low": 109.0,
+            "prev_close_compared": 105.76000213623048
+          },
+          {
+            "idx": 889,
+            "date": "2025-11-13",
+            "bullish": true,
+            "low_above_mother_low": true,
+            "close_higher_than_prev": true,
+            "close": 112.41000366210938,
+            "open": 110.0,
+            "low": 109.02799987792967,
+            "prev_close_compared": 110.81500244140624
+          },
+          {
+            "idx": 890,
+            "date": "2025-11-14",
+            "bullish": true,
+            "low_above_mother_low": true,
+            "close_higher_than_prev": true,
+            "close": 116.72000122070312,
+            "open": 109.68000030517578,
+            "low": 108.75,
+            "prev_close_compared": 112.41000366210938
+          },
+          {
+            "idx": 891,
+            "date": "2025-11-17",
+            "bullish": true,
+            "low_above_mother_low": true,
+            "close_higher_than_prev": true,
+            "close": 116.91000366210938,
+            "open": 116.9000015258789,
+            "low": 116.29000091552734,
+            "prev_close_compared": 116.72000122070312
+          },
+          {
+            "idx": 892,
+            "date": "2025-11-18",
+            "bullish": true,
+            "low_above_mother_low": true,
+            "close_higher_than_prev": true,
+            "close": 123.19000244140624,
+            "open": 116.0,
+            "low": 116.0,
+            "prev_close_compared": 116.91000366210938
+          }
+        ]
+      },
+      {
+        "symbol": "WBTN",
+        "reported_entry_date": "2024-11-07",
+        "recomputed_entry_date": "2024-11-07",
+        "entry_date_matches": true,
+        "mother_candle_bearish": true,
+        "all_N_confirmation_candles_valid": true,
+        "entry_conditions_hold": true,
+        "within_2yr_window_recheck": true,
+        "window_start_2yr_recomputed": "2024-09-08",
+        "reported_entry_price": 11.73,
+        "recomputed_entry_price": 11.73,
+        "entry_price_matches": true,
+        "reported_stop_price": 10.4,
+        "recomputed_stop_price": 10.4,
+        "stop_price_matches": true,
+        "reported_tp_price": 13.725,
+        "recomputed_tp_price": 13.725,
+        "tp_price_matches": true,
+        "reported_exit_date": "2024-11-11",
+        "recomputed_exit_date": "2024-11-11",
+        "exit_date_matches": true,
+        "reported_exit_reason": "stop_loss",
+        "recomputed_exit_reason": "stop_loss",
+        "exit_reason_matches": true,
+        "confirmation_candle_detail": [
+          {
+            "idx": 89,
+            "date": "2024-11-01",
+            "bullish": true,
+            "low_above_mother_low": true,
+            "close_higher_than_prev": true,
+            "close": 10.539999961853027,
+            "open": 10.5,
+            "low": 10.416999816894531,
+            "prev_close_compared": 10.399999618530272
+          },
+          {
+            "idx": 90,
+            "date": "2024-11-04",
+            "bullish": true,
+            "low_above_mother_low": true,
+            "close_higher_than_prev": true,
+            "close": 11.039999961853027,
+            "open": 10.800000190734863,
+            "low": 10.479999542236328,
+            "prev_close_compared": 10.539999961853027
+          },
+          {
+            "idx": 91,
+            "date": "2024-11-05",
+            "bullish": true,
+            "low_above_mother_low": true,
+            "close_higher_than_prev": true,
+            "close": 11.260000228881836,
+            "open": 11.06999969482422,
+            "low": 10.90999984741211,
+            "prev_close_compared": 11.039999961853027
+          },
+          {
+            "idx": 92,
+            "date": "2024-11-06",
+            "bullish": true,
+            "low_above_mother_low": true,
+            "close_higher_than_prev": true,
+            "close": 11.449999809265137,
+            "open": 11.43000030517578,
+            "low": 11.039999961853027,
+            "prev_close_compared": 11.260000228881836
+          },
+          {
+            "idx": 93,
+            "date": "2024-11-07",
+            "bullish": true,
+            "low_above_mother_low": true,
+            "close_higher_than_prev": true,
+            "close": 11.729999542236328,
+            "open": 11.470000267028809,
+            "low": 11.425000190734863,
+            "prev_close_compared": 11.449999809265137
+          }
+        ]
+      },
+      {
+        "symbol": "CDNS",
+        "reported_entry_date": "2024-11-22",
+        "recomputed_entry_date": "2024-11-22",
+        "entry_date_matches": true,
+        "mother_candle_bearish": true,
+        "all_N_confirmation_candles_valid": true,
+        "entry_conditions_hold": true,
+        "within_2yr_window_recheck": true,
+        "window_start_2yr_recomputed": "2024-09-08",
+        "reported_entry_price": 311.87,
+        "recomputed_entry_price": 311.87,
+        "entry_price_matches": true,
+        "reported_stop_price": 287.49,
+        "recomputed_stop_price": 287.49,
+        "stop_price_matches": true,
+        "reported_tp_price": 348.44,
+        "recomputed_tp_price": 348.44,
+        "tp_price_matches": true,
+        "reported_exit_date": "2025-01-27",
+        "recomputed_exit_date": "2025-01-27",
+        "exit_date_matches": true,
+        "reported_exit_reason": "stop_loss",
+        "recomputed_exit_reason": "stop_loss",
+        "exit_reason_matches": true,
+        "confirmation_candle_detail": [
+          {
+            "idx": 803,
+            "date": "2024-11-18",
+            "bullish": true,
+            "low_above_mother_low": true,
+            "close_higher_than_prev": true,
+            "close": 294.3299865722656,
+            "open": 291.3599853515625,
+            "low": 288.7699890136719,
+            "prev_close_compared": 289.7099914550781
+          },
+          {
+            "idx": 804,
+            "date": "2024-11-19",
+            "bullish": true,
+            "low_above_mother_low": true,
+            "close_higher_than_prev": true,
+            "close": 299.6300048828125,
+            "open": 291.3800048828125,
+            "low": 290.04998779296875,
+            "prev_close_compared": 294.3299865722656
+          },
+          {
+            "idx": 805,
+            "date": "2024-11-20",
+            "bullish": true,
+            "low_above_mother_low": true,
+            "close_higher_than_prev": true,
+            "close": 304.010009765625,
+            "open": 298.70001220703125,
+            "low": 296.05999755859375,
+            "prev_close_compared": 299.6300048828125
+          },
+          {
+            "idx": 806,
+            "date": "2024-11-21",
+            "bullish": true,
+            "low_above_mother_low": true,
+            "close_higher_than_prev": true,
+            "close": 306.510009765625,
+            "open": 306.1099853515625,
+            "low": 300.95001220703125,
+            "prev_close_compared": 304.010009765625
+          },
+          {
+            "idx": 807,
+            "date": "2024-11-22",
+            "bullish": true,
+            "low_above_mother_low": true,
+            "close_higher_than_prev": true,
+            "close": 311.8699951171875,
+            "open": 308.7099914550781,
+            "low": 307.0199890136719,
+            "prev_close_compared": 306.510009765625
+          }
+        ]
+      }
+    ]
+  },
+  "task2_portfolio_level_result": {
+    "baseline_result": {
+      "total_trades": 203,
+      "overall": {
+        "n": 203,
+        "wins": 84,
+        "losses": 119,
+        "win_rate": 0.4138,
+        "profit_factor_pct_based": 2.645,
+        "profit_factor_dollar_based": 2.3719,
+        "avg_return_pct": 0.049369,
+        "median_return_pct": -0.006098,
+        "avg_holding_days_calendar": 24.16
+      },
+      "final_cash": 142.82,
+      "final_positions_mtm_value": 7166.87,
+      "final_equity": 7309.68,
+      "total_return_pct": 2.3335,
+      "open_positions_at_window_end_count": 7,
+      "capital_utilization": {
+        "pct_trading_days_zero_open_positions": 0.0,
+        "avg_cash_fraction_of_equity": 0.0685,
+        "median_cash_fraction_of_equity": 0.0706,
+        "avg_concurrent_positions": 7.074,
+        "median_concurrent_positions": 7.0,
+        "max_concurrent_positions_ever_reached": 8,
+        "cap_from_risk_rules": 10
+      },
+      "deferred_queue": {
+        "total_distinct_candidates_created": 380,
+        "ever_deferred_at_least_once": 342,
+        "never_deferred_filled_immediately": 38,
+        "by_first_defer_reason": {
+          "daily_cap": 6,
+          "concurrent_cap": 0,
+          "cash_shortfall": 336
+        },
+        "eventually_filled": 210,
+        "never_filled_by_window_end": 170,
+        "invalidated_stop_breached_before_fill": 0,
+        "effectively_missed_gt_30_trading_days": 249,
+        "deferred_candidates_trading_days_waited_avg": 233.71,
+        "deferred_candidates_trading_days_waited_median": 143.0,
+        "deferred_candidates_trading_days_waited_max": 500
+      },
+      "entry_triggers_total_ungated_by_pending": 380,
+      "price_stop_loss_segment": {
+        "n": 83,
+        "wins": 32,
+        "losses": 51,
+        "win_rate": 0.3855,
+        "profit_factor_pct_based": 0.8505,
+        "profit_factor_dollar_based": 0.6011,
+        "avg_return_pct": -0.002543,
+        "median_return_pct": -0.004046,
+        "avg_holding_days_calendar": 2.42
+      },
+      "exit_signal_segment": {
+        "n": 120,
+        "wins": 52,
+        "losses": 68,
+        "win_rate": 0.4333,
+        "profit_factor_pct_based": 3.186,
+        "profit_factor_dollar_based": 2.9121,
+        "avg_return_pct": 0.085275,
+        "median_return_pct": -0.013298,
+        "avg_holding_days_calendar": 39.19
+      }
+    },
+    "momentum_seq_result": {
+      "total_trades": 79,
+      "overall": {
+        "n": 79,
+        "wins": 45,
+        "losses": 34,
+        "win_rate": 0.5696,
+        "profit_factor_pct_based": 3.0836,
+        "profit_factor_dollar_based": 3.0245,
+        "avg_return_pct": 0.11637,
+        "median_return_pct": 0.128433,
+        "avg_holding_days_calendar": 53.09
+      },
+      "final_cash": 174.57,
+      "final_positions_mtm_value": 5688.07,
+      "final_equity": 5862.65,
+      "total_return_pct": 1.6736,
+      "open_positions_at_window_end_count": 10,
+      "capital_utilization": {
+        "pct_trading_days_zero_open_positions": 0.008,
+        "avg_cash_fraction_of_equity": 0.0735,
+        "median_cash_fraction_of_equity": 0.0629,
+        "avg_concurrent_positions": 8.551,
+        "median_concurrent_positions": 8.0,
+        "max_concurrent_positions_ever_reached": 10,
+        "cap_from_risk_rules": 10
+      },
+      "deferred_queue": {
+        "total_distinct_candidates_created": 242,
+        "ever_deferred_at_least_once": 224,
+        "never_deferred_filled_immediately": 18,
+        "by_first_defer_reason": {
+          "daily_cap": 13,
+          "concurrent_cap": 30,
+          "cash_shortfall": 181
+        },
+        "eventually_filled": 89,
+        "never_filled_by_window_end": 63,
+        "invalidated_stop_breached_before_fill": 90,
+        "effectively_missed_gt_30_trading_days": 170,
+        "deferred_candidates_trading_days_waited_avg": 181.8,
+        "deferred_candidates_trading_days_waited_median": 165.0,
+        "deferred_candidates_trading_days_waited_max": 496,
+        "invalidated_events_sample": [
+          {
+            "symbol": "STX",
+            "first_trigger_date": "2024-09-25",
+            "would_be_fill_date": "2024-10-30",
+            "fill_price": 96.9303,
+            "stop_price": 97.1798
+          },
+          {
+            "symbol": "NXPI",
+            "first_trigger_date": "2024-10-28",
+            "would_be_fill_date": "2024-11-05",
+            "fill_price": 217.6356,
+            "stop_price": 220.232
+          },
+          {
+            "symbol": "PPLI",
+            "first_trigger_date": "2024-11-07",
+            "would_be_fill_date": "2024-11-13",
+            "fill_price": 38.5644,
+            "stop_price": 39.2535
+          },
+          {
+            "symbol": "PPG",
+            "first_trigger_date": "2024-12-04",
+            "would_be_fill_date": "2024-12-11",
+            "fill_price": 117.253,
+            "stop_price": 117.5782
+          },
+          {
+            "symbol": "RVMD",
+            "first_trigger_date": "2024-11-01",
+            "would_be_fill_date": "2024-12-12",
+            "fill_price": 44.93,
+            "stop_price": 46.34
+          },
+          {
+            "symbol": "HQY",
+            "first_trigger_date": "2024-11-20",
+            "would_be_fill_date": "2024-12-16",
+            "fill_price": 93.17,
+            "stop_price": 94.32
+          },
+          {
+            "symbol": "ECL",
+            "first_trigger_date": "2024-11-27",
+            "would_be_fill_date": "2024-12-18",
+            "fill_price": 233.9738,
+            "stop_price": 235.7672
+          },
+          {
+            "symbol": "VRTX",
+            "first_trigger_date": "2024-10-14",
+            "would_be_fill_date": "2024-12-18",
+            "fill_price": 447.5,
+            "stop_price": 447.7
+          },
+          {
+            "symbol": "INTU",
+            "first_trigger_date": "2024-11-12",
+            "would_be_fill_date": "2025-01-16",
+            "fill_price": 598.6666,
+            "stop_price": 601.0577
+          },
+          {
+            "symbol": "LITE",
+            "first_trigger_date": "2025-01-22",
+            "would_be_fill_date": "2025-01-27",
+            "fill_price": 74.17,
+            "stop_price": 84.65
+          }
+        ]
+      },
+      "entry_triggers_total_ungated_by_pending": 242,
+      "stop_loss_segment": {
+        "n": 34,
+        "wins": 0,
+        "losses": 34,
+        "win_rate": 0.0,
+        "profit_factor_pct_based": 0.0,
+        "profit_factor_dollar_based": 0.0,
+        "avg_return_pct": -0.129771,
+        "median_return_pct": -0.100914,
+        "avg_holding_days_calendar": 48.47
+      },
+      "take_profit_segment": {
+        "n": 45,
+        "wins": 45,
+        "losses": 0,
+        "win_rate": 1.0,
+        "profit_factor_pct_based": Infinity,
+        "profit_factor_dollar_based": Infinity,
+        "avg_return_pct": 0.302343,
+        "median_return_pct": 0.269784,
+        "avg_holding_days_calendar": 56.58
+      }
+    },
+    "deferred_queue_bottleneck_breakdown": {
+      "baseline": {
+        "daily_cap_pct": 1.8,
+        "concurrent_cap_pct": 0.0,
+        "cash_shortfall_pct": 98.2,
+        "note": "baseline几乎完全由cash_shortfall瓶颈驱动(336/342次首次顺延原因)，daily_cap极少见效(6次)，concurrent_cap从未生效(0次)——baseline平均持仓24.16天，周转够快，10个并发仓位的硬上限从未真正被打满。"
+      },
+      "momentum_seq": {
+        "daily_cap_pct": 5.8,
+        "concurrent_cap_pct": 13.4,
+        "cash_shortfall_pct": 80.8,
+        "note": "momentum_seq虽然也以cash_shortfall为主，但concurrent_cap贡献了13.4%的首次顺延(30次)，这是baseline完全没有的瓶颈类型——momentum_seq平均持仓53.09天(是baseline的2.2倍)，资金被少数几笔长线仓位占用更久，更容易把10个并发仓位的硬上限打满(capital_utilization.max_concurrent_positions_ever_reached=10，且avg_concurrent_positions=8.551，明显比baseline的7.074更接近上限)。"
+      }
+    },
+    "total_return_comparison": {
+      "baseline_total_return_pct": 2.3335,
+      "momentum_seq_total_return_pct": 1.6736,
+      "verdict": "baseline总收益率233.35%明显高于momentum_seq的167.36%，尽管momentum_seq的per-trade指标(win_rate 0.5696 vs 0.4138, profit_factor_pct_based 3.08 vs 2.65, avg_return_pct 11.6% vs 4.9%)全面优于baseline——这正是Order Block轮发现过的'指标好但组合总收益更差'模式的第三次出现，且这次的根因与Order Block轮(止损公式差异经由现金路径引发的蝴蝶效应式入场时点漂移)完全不同,是一种新的具体机制,见key_finding。"
+    }
+  },
+  "task2_verification": {
+    "method": "对baseline/momentum_seq各抽真实的'因组合级约束而顺延'案例(共5个，覆盖daily_cap/cash_shortfall/concurrent_cap/invalidated_stop_breached四种瓶颈类型)，用frames.pkl逐日重建当日候选池/字母序排序/现金水位，手工核对trade_log/candidate_lifecycle/daily_stats三份独立数据结构是否逐位一致，方法与strategy_backtest_adx_portfolio_level_pacing_test.json / strategy_backtest_orderblock_rangeosc_portfolio_level.json的verification完全一致。",
+    "queue_timeline_hand_checks": [
+      {
+        "variant": "baseline",
+        "symbol": "PAYX",
+        "case": "daily_cap顺延2个交易日后成交",
+        "timeline": "2024-09-09(窗口第1个交易日)entry_rise触发候选池(字母序)=[AAOI,IFF,MDB,PAYX,VEEV,ZTS]共6个，daily_cap=3，字母序前3(AAOI,IFF,MDB)成交，PAYX排第4被顺延(daily_cap)。2024-09-10 MDB当天退出(exit_signal)，候选池=[PAYX,VEEV,ZTS结转]+[ADBE,NOW,ORCL新触发]=[ADBE,NOW,ORCL,PAYX,VEEV,ZTS]，前3(ADBE,NOW,ORCL)成交，PAYX仍排第4被顺延(daily_cap)。2024-09-11新触发=[AAOI(已持仓中，因'一只股票同时最多1仓'规则被排除,不重新进候选池),ONDS,PLTR,RDDT,RPM,VISN]，候选池=[PAYX,VEEV,ZTS结转]+[ONDS,PLTR,RDDT,RPM,VISN新触发]=[ONDS,PAYX,PLTR,RDDT,RPM,VEEV,VISN,ZTS]，前3(ONDS,PAYX,PLTR)成交——PAYX当天成交，trade_log记录entry_date=2024-09-11/entry_price=123.8779。",
+        "verified": "trading_days_waited_in_queue=2，与candidate_lifecycle(cand_id 4)逐位一致；三天的daily_stats.daily_cap计数(3,3,-)与手工重建的候选池排队结果完全吻合；未发现重复计数或插队。"
+      },
+      {
+        "variant": "baseline",
+        "symbol": "BOXL",
+        "case": "cash_shortfall顺延224个交易日后成交(第二段独立episode)",
+        "timeline": "BOXL在窗口内出现两段独立的entry/exit episode。第二段：2025-04-25首次触发momentum baseline entry_rise，此后连续224个交易日反复排队均被cash_shortfall顺延，直到2026-03-18现金腾出才成交(entry_price=$6.48，此时BOXL股价已从触发时的高位大幅下挫)，次日(2026-03-19)即被price_stop_loss止损平仓(小赚+2.78%)。",
+        "verified": "trade_log第二条BOXL记录：first_trigger_date=2025-04-25/entry_date=2026-03-18/trading_days_waited_in_queue=224，与candidate_lifecycle(cand_id 225)逐位一致；2026-03-17/2026-03-18两日daily_stats现金(505.76->413.16)与成交所需资金量级吻合。"
+      },
+      {
+        "variant": "momentum_seq",
+        "symbol": "AAOI",
+        "case": "concurrent_cap顺延9个交易日后成交(baseline完全不会遇到的瓶颈类型)",
+        "timeline": "AAOI第三段episode于2026-04-13首次触发momentum_entry_rise(此时AAOI前两段episode均已止盈平仓)。2026-04-13至2026-04-23连续9个交易日，daily_stats显示concurrent_positions恒为10(=max_concurrent上限)，每日concurrent_cap顺延计数52~62不等，daily_cap/cash_shortfall当期均为0——账户被10个仓位完全占满，不是缺钱。直到2026-04-24 AMD当天退出(exit_signal)腾出1个名额，AAOI当天以收盘价$162.17成交，现金从$109.35跳升到$250.85(AMD平仓所得-AAOI建仓成本净额)。",
+        "verified": "trade_log第三条AAOI记录：first_trigger_date=2026-04-13/entry_date=2026-04-24/trading_days_waited_in_queue=9，与candidate_lifecycle(cand_id 210)逐位一致；9天daily_stats的concurrent_positions=10/cash恒定$109.35，与'被concurrent_cap卡住、不是被现金卡住'的判断完全吻合。这笔仓位最终于2026-07-16被stop_loss止损(-35.19%)，是momentum_seq total_return低于baseline的具体贡献之一。"
+      },
+      {
+        "variant": "momentum_seq",
+        "symbol": "STX",
+        "case": "invalidated_stop_breached——排队36个交易日后止损价被击穿，候选失效未曾开仓",
+        "timeline": "STX于2024-09-25触发momentum_entry_rise，mother candle最低点(=止损价)=$97.18。此后股价先上涨到10月中旬的$109附近，再从2024-10-22起连续下跌，到2024-10-30收盘价$96.93已跌破$97.18的止损线——此时这笔候选仍在排队中，从未真正被daily_cap/concurrent_cap/cash_shortfall放行过(first_defer_reason=cash_shortfall，即它最初就是被资金不足挡下的，此后每天continue排队直到价格自己先跌破止损线)，被判定invalidated_stop_breached，永久移出队列，从未开仓，不计入交易。",
+        "verified": "独立回放STX 2024-09-25至2024-10-30区间的close/low逐日序列，确认close首次<=97.17976的交易日正是2024-10-30(收盘$96.9303)，与invalidated_events记录的would_be_fill_date=2024-10-30/fill_price=96.9303/stop_price=97.1798完全一致；此前35个交易日close全部高于止损线，候选合法留在队列里，未被提前误判失效。"
+      },
+      {
+        "variant": "momentum_seq",
+        "symbol": "CFG",
+        "case": "cash_shortfall顺延165个交易日后成交，窗口结束仍持仓浮盈",
+        "timeline": "CFG于2025-06-25触发momentum_entry_rise，此后连续165个交易日反复排队均被cash_shortfall顺延(账户现金规模只能承载约8-9个12%并发仓位)，直到2026-02-20现金腾出(同日AAOI一笔仓位exit_signal平仓)才成交，entry_price=$64.4055。窗口结束(2026-09-08)CFG仍持仓未触发止损或止盈，mark-to-market close=$69.99，浮盈+8.67%。",
+        "verified": "trade_log中查无CFG(因为它从未平仓)，但candidate_lifecycle(cand_id 115)记录status=filled/filled_date=2026-02-20/trading_days_waited=165，且open_positions_at_window_end里能查到CFG(entry_price=$64.4055/unrealized_return_pct=0.0867)，三份数据结构(候选生命周期/未平仓明细/当日现金流)完全吻合，证实这不是遗漏也不是重复计数，只是一笔仍在场内的长线浮盈仓位。"
+      }
+    ]
+  },
+  "comparison_table": [
+    {
+      "config": "task1_1yr_N5_R1.5_native",
+      "total_trades": 141,
+      "win_rate": 0.5603,
+      "profit_factor": 2.4294,
+      "n_symbols": 105,
+      "scope": "per-symbol(非组合级)"
+    },
+    {
+      "config": "task1_2yr_N5_R1.5_native",
+      "total_trades": 293,
+      "win_rate": 0.5495,
+      "profit_factor": 2.2505,
+      "n_symbols": 156,
+      "scope": "per-symbol(非组合级)"
+    },
+    {
+      "config": "task1_2yr_excl_top3",
+      "total_trades": 290,
+      "win_rate": 0.5448,
+      "profit_factor": 2.0832,
+      "n_symbols": null,
+      "scope": "per-symbol(非组合级)/稳健性检查"
+    },
+    {
+      "config": "task2_portfolio_baseline",
+      "total_trades": 203,
+      "win_rate": 0.4138,
+      "profit_factor": 2.645,
+      "total_return_pct": 2.3335,
+      "scope": "组合级(186只股票共享资金池,2年窗口)"
+    },
+    {
+      "config": "task2_portfolio_momentum_seq",
+      "total_trades": 79,
+      "win_rate": 0.5696,
+      "profit_factor": 3.0836,
+      "total_return_pct": 1.6736,
+      "scope": "组合级(186只股票共享资金池,2年窗口)"
+    }
+  ],
+  "key_finding": "任务1(2年窗口per-symbol稳健性)——如实结论：稳健，不是1年窗口的运气。样本量从141笔/105只股票增长到293笔/156只股票(+107.8%笔数/+48.6%覆盖股票数)，完全符合'更长窗口应该给更多股票机会至少出现一次N=5确认序列'的预期，不是样本停滞或诡异反常。win_rate几乎不变(0.5603->0.5495，-1.1pp)，profit_factor有小幅下降但仍稳稳跑赢基线(2.4294->2.2505，基线是1.8574)，median_return_pct几乎不变(0.08854->0.08831)。剔除最赚3笔后PF从2.2505降到2.0832，同样稳健跑赢基线，且降幅比例与1年窗口剔除后的降幅(2.4294->2.2018)基本同一量级，说明这不是被少数极端交易撑起来的假象。5笔独立抽样复核全部通过。结论：2年窗口没有推翻1年窗口的结论，反而用近乎翻倍的样本量增强了它的可信度。\n\n任务2(组合级真实资金约束测试)——如实结论：这是继ADX(反转)/摆动支撑位(未反转)/Order Block(止损段指标改善但组合总收益更差)之后，第三次观察到'per-symbol正面结果在真实资金约束下不能直接兑现'，但这次的具体模式和根因都是全新的，必须完整交代：\n(1) per-symbol层面的正面结果这次不仅没有反转，反而在组合级约束下'看起来更强'——momentum_seq变体的win_rate(0.5696)/profit_factor(3.08)/avg_return_pct(11.6%)全面优于task1标准2年窗口per-symbol结果(0.5495/2.25/6.5%)，也全面优于baseline的组合级结果(0.4138/2.65/4.9%)。但这个'看起来更强'背后有一个必须拆穿的真相：momentum_seq在组合级约束下有整整90笔候选(占242笔总候选的37.2%)在真正获得成交机会之前，因为价格已经跌破自己定义的止损线(mother candle最低点)而被判定'失效'(invalidated_stop_breached)，永久退出队列、从未真正开仓、当然也不会被计入任何亏损统计。这是一个真实存在的选择性偏差(selection effect)：本来会大概率触发止损的'烂设置'，很多在真正排到队之前就已经自己'死'在队列里了，幸存下来真正成交的79笔天然是被筛选过的、更强的子集。这不是bug，是Momentum Sequence这个信号自带'硬价格失效条件'(其他信号如entry_state/price_stop_loss都没有这个属性)与'共享资金池排队制'碰撞后必然产生的结构性效应——per-trade指标好看，一部分是真实的信号质量，一部分是这种隐藏筛选的人为放大，两者需要分开看待。\n(2) 尽管per-trade指标全面占优，momentum_seq的组合总收益率(167.36%)仍明显低于baseline(233.35%)——这是本报告最核心的检验结论，也是'不能只看per-trade统计,必须看组合总收益率'这条教训的第三次印证。但这次的根因与Order Block轮完全不同：Order Block轮是'止损公式差异通过现金路径产生蝴蝶效应式的入场时点漂移'；这次是一个更直接、更容易理解的机制——资金周转速度(capital velocity)。momentum_seq平均持仓53.09天，是baseline平均持仓24.16天的2.2倍；这意味着同样一笔资金，baseline在2年窗口里能循环使用的次数远多于momentum_seq(baseline组合级共完成203笔交易，momentum_seq只完成79笔)。更长的持仓时间叠加max_concurrent_positions=10的硬上限，导致momentum_seq的资金经常被少数几笔长线仓位'锁死'——deferred_queue显示momentum_seq有13.4%的候选是被concurrent_cap(并发仓位数已满)顺延的，而baseline整个窗口期concurrent_cap顺延次数为0(baseline周转足够快，10个仓位的上限从未真正被打满)。用具体案例佐证：AAOI第三段仓位因concurrent_cap排队9个交易日才成交，成交后不到3个月就因股价大跌被自己的主K线止损止损离场(-35.19%)——如果不是被顺延，更早的入场点风险可能完全不同。总收益率差异的本质不是'momentum_seq赢面差'，而是'momentum_seq的每一分钱平均赚钱的机会更少'——这是一个信号频率/持仓周期与硬资金约束之间的结构性张力，跟止损公式本身的优劣关系不大。\n(3) 资金利用率上两者接近(baseline平均现金占比6.85%/momentum_seq平均现金占比7.35%，都保持较满仓状态，不是momentum_seq'资金闲置没用出去')，说明差距不是来自'没把钱投出去'，而是来自'钱投出去后周转不够快'。\n(4) 组合级瓶颈画像上两者也不同：baseline几乎完全是cash_shortfall瓶颈(98.2%的首次顺延原因)，momentum_seq虽然也以cash_shortfall为主(80.8%)，但多出13.4%的concurrent_cap瓶颈和更高比例的daily_cap瓶颈(5.8% vs 1.8%)——这些都是'持仓时间更长'这一个根因在队列层面的不同表现形式。",
+  "recommendation": "任务1：2年窗口稳健性复测通过，建议把'2年窗口下依然稳健'正式写入对Momentum Sequence(N5/R1.5)这个候选的证据记录里，不需要再往5年窗口延伸(用户已明确说5年太长，1-2年足够，这次的2年结果已经充分回应了'1年窗口是不是运气'这个疑虑)。\n\n任务2：不建议现在就把Momentum Sequence写入risk_rules.json，无论是作为独立的第7个信号还是叠加在现有entry之上——理由是组合级总收益率(167.36%)明显低于baseline(233.35%)，这是本项目一贯坚持的'总收益率是最终检验标准，per-trade指标好看不算数'的直接应用，如果这次因为per-trade数字好看就写入，会正好重复Order Block轮已经踩过的坑。\n但也要如实说明这次的情况比Order Block轮更值得后续跟进，不是简单的'否决'：momentum_seq组合总收益率仍然是正的、大幅跑赢无风险资产(167.36%/2年)，只是跑不过baseline；根因(资金周转速度，不是信号质量本身)提示了两个可能值得探索、但这次任务范围之外的方向——(a) 如果把Momentum Sequence当作'baseline之外的第二套独立子策略'、用一部分单独切分的资金池(而不是让它跟baseline的entry_state信号抢同一个10仓位/12%仓位的资源池)运行，会不会既保留它更高的per-trade质量，又不再被baseline的资金占用挤出局？(b) invalidated_stop_breached占37.2%这个比例本身提示，如果把仓位规模做小一点(不是medium=12%而是更小的档位)、或者提高max_concurrent_positions上限，是否能显著减少'signals排队排到自己过期'的浪费？这两个方向都需要专门的后续测试才能回答，本报告不预判结果，只指出这是下一步如果还想继续深挖这个候选、值得先测的两个具体假设，而不是立即在当前资金规则下写入。\n\n整体优先级：如果要投入下一步验证精力，'(a)独立子资金池切分测试' > '(b)仓位规模/并发上限敏感性测试' > 都不做、维持baseline单一信号 > 现在就写入risk_rules.json(不建议)。"
+}
